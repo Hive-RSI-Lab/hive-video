@@ -1,0 +1,6 @@
+{
+  "name": "video",
+  "description": "Highlight reels and demo videos made in code: a film script drives a web page frame-exact on a virtual clock (Playwright), Blender renders the 3D shots, ffmpeg cuts the MP4 and a GIF under 3 MB, and `video stutters` checks the motion. Deterministic: the same script makes the same film however loaded the box is.",
+  "provides": {"programs": ["bin/video.mjs"], "procedures": ["SKILL.md", "README.md"]},
+  "projects": ["*"]
+}
