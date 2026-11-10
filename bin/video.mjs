@@ -124,12 +124,15 @@ switch (cmd) {
   }
   case 'blender': {
     const quality = flag('--quality', 'preview'), raw = args.includes('--raw');
-    const [shot, out] = args.filter((a) => a !== '--raw');
+    const [shot, out] = args.filter((a, i) => a !== '--raw' && !a.startsWith('--') && !['--quality', '--frames'].includes(args[i - 1]));
     if (!out) die('blender SHOT.py OUT/ [--quality preview|final] [--raw]');
     mkdirSync(out, { recursive: true });
     const env = { ...process.env, PYTHONPATH: [join(KIT, 'blender'), process.env.PYTHONPATH].filter(Boolean).join(':'), VIDEO_BLENDER: join(KIT, 'blender') };
-    const a = raw ? ['-b', '--factory-startup', '--python', resolve(shot), '-o', join(resolve(out), '####'), '-a']
-      : ['-b', '--factory-startup', '--python', resolve(shot), '--', '--quality', quality, '--render', resolve(out)];
+    const frames = flag('--frames');
+    // official builds ignore PYTHONPATH without --python-use-system-env; a shot that fails must stop, not render the default cube
+    const base = ['-b', '--python-use-system-env', '--factory-startup', '--python-exit-code', '1', '--python', resolve(shot)];
+    const a = raw ? [...base, '-o', join(resolve(out), '####'), '-a']
+      : [...base, '--', '--quality', quality, '--render', resolve(out), ...(frames ? ['--frames', frames] : [])];
     process.exit(run(process.env.BLENDER || 'blender', a, { env }));
   }
   case 'length': console.log(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', args[0]], { encoding: 'utf8' }).trim()); break;

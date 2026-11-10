@@ -50,9 +50,10 @@ total; the thing working within 2 s; one camera move a beat (1.5-2x, 0.4-0.7 s);
 
 `video blender SHOT.py OUT/ [--quality preview|final]` renders a shot script on the CPU. Run it under your job limiter (`heavy` on H2),
 and run `--quality preview` first, because a final render takes minutes per second of film. The helpers (easing,
-camera with depth of field, light rig, a PCB from KiCad, GDS extrusion, a UI plane, node graphs) are in
-`kit/blender/README.md`. Encode the frames with the kit's `encodeFrames` or ffmpeg, then cut them in with
-`stitch`.
+camera with depth of field, light rig, a PCB from KiCad, a schematic that draws itself, GDS extrusion, a UI plane,
+node graphs, a spring camera, cached rigid-body and cloth physics, bloom) are in
+`kit/blender/README.md`. `--frames A-B` renders part of a shot, `VIDEO_THREADS=N` caps its threads. Encode the frames with the kit's `encodeFrames` or ffmpeg, then cut them in with
+`stitch` (`endFade` crossfades into the end card only, the rest stay hard cuts).
 
 ## Terminals
 

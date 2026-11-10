@@ -477,12 +477,19 @@ export function fadeOffsets(lengths, fade) {
   return out;
 }
 
-/** The clips joined into one film, the film's one final encode: hard cuts by default (fade 0), or each crossfading
- *  into the next over `fade` s. The film runs at the first clip's frame rate. */
-export function stitch(clips, { mp4, fade = 0 }) {
+/** The clips joined into one film, the film's one final encode: hard cuts by default (fade 0), each crossfading
+ *  into the next over `fade` s, or hard cuts with only the last clip (the end card) crossfading in over `endFade` s. The film runs at the first clip's frame rate. */
+export function stitch(clips, { mp4, fade = 0, endFade = 0 }) {
   const probe = FFMPEG.replace(/ffmpeg$/, 'ffprobe');
   const r = execFileSync(probe, ['-v', 'error', '-select_streams', 'v', '-show_entries', 'stream=r_frame_rate', '-of', 'csv=p=0', clips[0]],
     { encoding: 'utf8' }).trim();
+  if (endFade && clips.length > 1) {  // the kit's own rule: hard cuts, one crossfade into the end card
+    const body = clips.slice(0, -1), at = body.reduce((s, c) => s + lengthOf(c), 0) - endFade;
+    const graph = body.map((_, i) => `[${i}:v]`).join('') + `concat=n=${body.length}:v=1:a=0,settb=AVTB,fps=${r}[b];` +
+      `[${body.length}:v]settb=AVTB,fps=${r}[e];[b][e]xfade=transition=fade:duration=${endFade}:offset=${at.toFixed(3)}[v]`;
+    ff([...q, ...clips.flatMap((c) => ['-i', c]), '-filter_complex', graph, '-map', '[v]', '-r', r, ...H264, mp4]);
+    return;
+  }
   if (clips.length === 1 || !fade) {
     const graph = clips.map((_, i) => `[${i}:v]`).join('') + `concat=n=${clips.length}:v=1:a=0[v]`;
     ff([...q, ...clips.flatMap((c) => ['-i', c]), '-filter_complex', graph, '-map', '[v]', '-r', r, ...H264, mp4]);

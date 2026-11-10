@@ -103,11 +103,16 @@ def render_settings(quality='preview', transparent=True, motion_blur=True, shutt
     s.render.engine = 'CYCLES'
     s.cycles.samples = samples
     s.cycles.use_adaptive_sampling = True
-    # Ubuntu's Blender is built without a denoiser (the enum is empty); the laptop's official build has OIDN
-    have = [i.identifier for i in s.cycles.bl_rna.properties['denoiser'].enum_items]
-    s.cycles.use_denoising = 'OPENIMAGEDENOISE' in have
-    if s.cycles.use_denoising:
+    # Ubuntu's Blender is built without a denoiser; official builds have OIDN. The enum is dynamic, so enum_items is
+    # empty on both: the only honest test is to set it.
+    try:
         s.cycles.denoiser = 'OPENIMAGEDENOISE'
+        s.cycles.use_denoising = True
+    except TypeError:
+        s.cycles.use_denoising = False
+    s.render.threads_mode = 'FIXED' if os.environ.get('VIDEO_THREADS') else 'AUTO'
+    if os.environ.get('VIDEO_THREADS'):
+        s.render.threads = int(os.environ['VIDEO_THREADS'])
     s.cycles.max_bounces = 8
     s.cycles.sample_clamp_indirect = 4.0   # glossy metal at low samples throws fireflies
     s.cycles.blur_glossy = 1.0
@@ -347,8 +352,8 @@ def board_parts(parts, board, thick=1.6, scale=0.01, name='parts', finish='gloss
     offset in mm. finish is a FINISH. Returns the part objects."""
     f = _finish(finish)
     if isinstance(parts, str):
-        with open(parts) as f:
-            parts = json.load(f)
+        with open(parts) as fh:
+            parts = json.load(fh)
     W, H = parts['size']
     mats, data, objs = {}, {}, []
 
