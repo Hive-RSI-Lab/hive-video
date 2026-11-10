@@ -8,7 +8,7 @@
    video render FILM.mjs [ARGS...]          runs a film script with VIDEO_KIT set (import from it); checks the kit first
                                             unless a pass for this exact kit is stamped
    video stutters MP4 [--allow A-B,...]     frozen frames inside a move, and uneven motion (jumps, too-fast moves,
-                                            pops), in seconds. Exit 1 on any stutter or jerk. A-B are seconds to skip
+                                            pops), in seconds. Exit 1 on any stutter, jerk or flash frame. A-B are seconds to skip
    video sheet MP4 PNG [N]                  a contact sheet of N frames (default 12): look at it before posting
    video mp4 IN OUT [CRF]                   the web MP4 (H.264 High, CRF 24, faststart)
    video gif IN OUT [--max MB] [--width W] [--fps F] [--colours C]
@@ -43,14 +43,14 @@ function kitHash() {
 const stamp = () => join(CACHE, `checked-${kitHash()}`);
 
 async function measure(mp4, allowS) {
-  const { frameDiffs, stutters, jerks, jerkSpans } = await import(join(KIT, 'motion/measure.mjs'));
+  const { frameDiffs, stutters, jerks, jerkSpans, flashFrames } = await import(join(KIT, 'motion/measure.mjs'));
   const [n, dd] = execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=r_frame_rate', '-of', 'csv=p=0', mp4], { encoding: 'utf8' }).trim().split(/[,\s]/)[0].split('/').map(Number);
   const fps = n / (dd || 1);
   const d = frameDiffs(mp4);
   const allow = allowS.map(([a, b]) => [Math.floor(a * fps), Math.ceil(b * fps)]);
   const st = stutters(d).filter((i) => !allow.some(([a, b]) => i >= a && i <= b));
   const js = jerks(d, { allow });
-  return { fps, frames: d.length, stutters: st.map((i) => +(i / fps).toFixed(2)), jerks: jerkSpans(js, fps) };
+  return { fps, frames: d.length, stutters: st.map((i) => +(i / fps).toFixed(2)), jerks: jerkSpans(js, fps), flashes: flashFrames(d).filter((i) => !allow.some(([a, b]) => i >= a && i <= b)).map((i) => +(i / fps).toFixed(2)) };
 }
 
 const size = (f) => statSync(f).size / 1e6;
@@ -90,7 +90,8 @@ switch (cmd) {
     console.log(`${mp4}: ${m.frames} frames at ${m.fps} fps, ${(m.frames / m.fps).toFixed(2)} s`);
     console.log(`stutters: ${m.stutters.length}${m.stutters.length ? '  at ' + m.stutters.join(', ') + ' s' : ''}`);
     console.log(`jerks: ${m.jerks.length}${m.jerks.length ? '\n  ' + m.jerks.join('\n  ') : ''}`);
-    process.exit(m.stutters.length || m.jerks.length ? 1 : 0);
+    console.log(`flash frames: ${m.flashes.length}${m.flashes.length ? '  at ' + m.flashes.join(', ') + ' s' : ''}`);
+    process.exit(m.stutters.length || m.jerks.length || m.flashes.length ? 1 : 0);
   }
   case 'sheet': {
     const [mp4, png, n] = args;

@@ -15,6 +15,8 @@ export function frameDiffs(mp4, { w = 320, h = 180 } = {}) {
   const raw = execFileSync(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-i', mp4, '-vf', `scale=${w}:${h}:flags=area,format=gray`,
     '-f', 'rawvideo', '-'], { maxBuffer: 1 << 30 });
   const n = Math.floor(raw.length / (w * h)), d = [0];
+  // each frame's mean brightness rides along, for flashFrames
+  d.means = Array.from({ length: n }, (_, i) => { let s = 0; for (let k = 0; k < w * h; k++) s += raw[i * w * h + k]; return s / (w * h); });
   for (let i = 1; i < n; i++) {
     let s = 0;
     const a = (i - 1) * w * h, b = i * w * h;
@@ -22,6 +24,17 @@ export function frameDiffs(mp4, { w = 320, h = 180 } = {}) {
     d.push(s / (w * h));
   }
   return d;
+}
+
+/** Indices of single frames that don't belong: one frame much brighter or darker than both neighbours, while those two agree (a black
+ *  frame, a stray render). A hard cut is ruled out because the neighbours differ across it; a real flare lasts more than one frame. */
+export function flashFrames(d, { min = 8, ratio = .4, agree = .4 } = {}) {
+  const m = d.means, out = [];
+  for (let i = 1; i + 1 < m.length; i++) {
+    const mid = (m[i - 1] + m[i + 1]) / 2, off = Math.abs(m[i] - mid);
+    if (off > Math.max(min, ratio * mid) && Math.abs(m[i - 1] - m[i + 1]) < off * agree) out.push(i);
+  }
+  return out;
 }
 
 /** Indices of frozen frames inside motion: up to `run` still frames (change <= `still`) with real motion (> `moving`)

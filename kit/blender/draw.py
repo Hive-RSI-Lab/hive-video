@@ -16,6 +16,7 @@ import math
 import os
 
 import bpy
+import mathutils
 import numpy as np
 
 
@@ -226,6 +227,38 @@ def rigid_sim(objs, f0, f1, cache=None, passive=(), gravity=-9.81, substeps=20, 
     _key_all(objs, track)
 
 
+def drop(o, land, lift, tilt=(0.0, 0.0, 0.0), spin=(0.0, 0.0, 0.0), scatter=(0.0, 0.0), f0=1, tail=30, g=9.81, e=0.26):
+    """Hang o above where it is now, then let it fall under gravity so it hits home exactly on frame land, bounces at
+    restitution e and settles flat. A worked-out fall, no solver: a part this small jumps about in Bullet and a solver can't
+    be told when to land. Keys o in its parent's space, so a part riding a moving board stays on it. lift is the height it
+    falls, tilt (radians) how far it hangs off true, spin how fast that changes a frame, scatter how far off to the side
+    it hangs in xy. Returns the frame it lets go."""
+    loc, q = o.location.copy(), o.rotation_quaternion.copy()
+    o.rotation_mode = 'QUATERNION'
+    fall = 30 * math.sqrt(2 * lift / g)
+    r = land - fall
+    tq = lambda f: q @ mathutils.Euler(tuple(t + w * (f - f0) for t, w in zip(tilt, spin))).to_quaternion()  # noqa: E731
+    z, v, hit = 0.0, g * fall / 30 * e, tq(land)
+    for f in range(f0, land + tail + 1):
+        if f < r:
+            h, u, rot = lift * (1 - .06 * (r - f) / max(1.0, r - f0)), 0.0, tq(f)
+        elif f <= land:
+            h, u, rot = lift - .5 * g * ((f - r) / 30) ** 2, (f - r) / (land - r), tq(f)
+        else:
+            for _ in range(8):
+                v -= g / 30 / 8
+                z += v / 30 / 8
+                if z <= 0:
+                    z, v = 0.0, -v * e if abs(v) > .15 else 0.0
+            h, u, rot = z, 1.0, hit.slerp(q, 1 - math.exp(-(f - land) / 3))
+        k = 1 - u * u * (3 - 2 * u)
+        o.location = (loc.x + scatter[0] * k, loc.y + scatter[1] * k, loc.z + max(0.0, h))
+        o.rotation_quaternion = rot
+        o.keyframe_insert('location', frame=f)
+        o.keyframe_insert('rotation_quaternion', frame=f)
+    return r
+
+
 def _write_pc2(path, frames, fps_start):
     a = np.asarray(frames, dtype='<f4')
     with open(path, 'wb') as f:
@@ -316,3 +349,24 @@ def bloom(threshold=1.0, strength=0.6, size=0.55, vignette=0.0):
     out = nt.nodes.new('NodeGroupOutput')
     nt.links.new(g.outputs[0], out.inputs[0])
     return nt
+
+
+def clear_lens(objs, f0, f1, near=.15):
+    """hide any object, for just those frames, while it comes within `near` plus its own size of the camera: a falling part that crosses
+    the lens fills a frame with black, and nobody misses a part for the frame it would have covered everything. Call it last, after the
+    objects and the camera are animated. Returns how many frames were hidden."""
+    scene = bpy.context.scene
+    was, hidden = scene.frame_current, 0
+    sizes = [(o, max(o.dimensions) / 2) for o in objs]
+    for f in range(f0, f1 + 1):
+        scene.frame_set(f)
+        eye = scene.camera.matrix_world.translation
+        for o, r in sizes:
+            if (o.matrix_world.translation - eye).length < near + r:
+                o.hide_render = True
+                o.keyframe_insert('hide_render', frame=f)
+                o.hide_render = False
+                o.keyframe_insert('hide_render', frame=f + 1)
+                hidden += 1
+    scene.frame_set(was)
+    return hidden

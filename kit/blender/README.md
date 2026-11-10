@@ -45,6 +45,13 @@ A shot imports `kit.py` and `scene.py` from beside it, or from `VIDEO_BLENDER` (
 - **Labels:** `-- --track labels.json` writes every tracked point's screen position, frame by frame, with the
   `meta` the shot returned. Blender never renders text a viewer must read. The compositor sets it from this file.
 
+## A real board's parts and paths
+
+`python3 kicad.py BOARD.kicad_pcb OUT/ --models DIR --synth` gives a footprint with no usable 3D model a plain body as big as
+its courtyard, so an unfinished board still has every part in its true place. In a shot, `kicad.net_pads(pcb, ref, net)` gives
+where a part's pads on a net are, and `kicad.net_path(pcb, net, a, b)` gives the copper a signal really runs on between two parts,
+through vias, and True. If the net isn't routed all the way it returns the straight airwire and False: say so on screen.
+
 ## Moves with weight
 
 - **A camera on a spring.** `kit.spring(keys, f0, f1, stiffness=)` chases keyed targets as a mass on a spring, so a move
@@ -55,6 +62,11 @@ A shot imports `kit.py` and `scene.py` from beside it, or from `VIDEO_BLENDER` (
   `dir=DIR`). A preview, the final and a `--frames` fill all play that one take. Delete the cache to get a new one.
 - **Throwing something with Bullet.** A rigid body has no starting velocity. Key it `kinematic` for a few frames along
   the throw, then let `setup(obj)` hand it to the simulation, and it leaves with the speed of those keys.
+- **A part that lands on the beat.** `draw.drop(o, land, lift)` hangs a part and lets it fall under worked-out gravity so
+  it hits home exactly on frame `land`, bounces and settles flat. Use it for small parts, which jump about in Bullet and
+  can't be told when to land. It keys `o` in its parent's space, so a part riding a moving board stays on it.
+- **Nothing crosses the lens.** Call `draw.clear_lens(objs, f0, f1)` last, after the objects and camera are animated: it
+  hides any object for just the frames it would pass within reach of the camera, so a falling part can't fill a frame with black.
 - **Writing on the table.** Give `prisms` rows of a stroke's start and end frame and use a `draw_on` material: the
   geometry never changes and a shader shows each piece as its frame passes, so it costs nothing per frame. Give
   `rest=` a small value so a finished line doesn't go black when its glow has decayed.
