@@ -439,7 +439,7 @@ export async function encodeClip(beat, { mp4, work, bg = '#ffffff' }) {
   writeFileSync(text, beat.caption || '');
   const vf = beat.caption ? captionFilter(text) + ',' : '';
   ff([...q, '-framerate', String(beat.fps), '-i', join(dir, 'c%06d.png'),
-    '-vf', `${vf}scale=trunc(iw/2)*2:trunc(ih/2)*2:out_range=tv:out_color_matrix=bt709,format=yuv420p`, ...CLIP, mp4]);
+    '-vf', `${vf}scale=trunc(iw/2)*2:trunc(ih/2)*2:out_range=tv:out_color_matrix=bt709,format=yuv420p,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709`, ...CLIP, mp4]);
   if (!process.env.DEMO_KEEP) rmSync(dir, { recursive: true, force: true });
   return beat.frames.length / beat.fps;
 }
@@ -463,7 +463,7 @@ export function encodeFrames(frames, { mp4, list, vf = '', fps = 30 }) {
     symlinkSync(resolve(kept[i].file), join(seq, `s${String(o + 1).padStart(6, '0')}${ext}`));
   }
   ff([...q, '-framerate', String(fps), '-i', join(seq, `s%06d${ext}`),
-    '-vf', `${vf ? vf + ',' : ''}scale=trunc(iw/2)*2:trunc(ih/2)*2:out_range=tv:out_color_matrix=bt709,format=yuv420p`, ...CLIP, mp4]);
+    '-vf', `${vf ? vf + ',' : ''}scale=trunc(iw/2)*2:trunc(ih/2)*2:out_range=tv:out_color_matrix=bt709,format=yuv420p,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709`, ...CLIP, mp4]);
   rmSync(seq, { recursive: true, force: true });
   return count / fps;
 }
