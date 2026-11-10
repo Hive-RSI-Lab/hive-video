@@ -5,6 +5,7 @@
     prisms(segs, mat, name)             one mesh of raised strokes: segs = (ax, ay, bx, by, ta, tb, width, height, z)
     rigid_sim(objs, f0, f1, cache=...)  Bullet rigid bodies, stepped once and baked to keys on every frame
     cloth_sim(objs, f0, f1, dir=...)    Blender cloth, stepped once and written to PC2 files, played by a Mesh Cache
+    boost(mats, keys)                   a flare: keyed factors on the emission of finished materials, keys = (frame, factor)
     bloom(...)                          the render's compositor: a bloom from the bright HDR parts of the frame
 
 A sim is run once and stored (cache=FILE or dir=DIR), so a preview and the final are the same take, a frame range can be
@@ -112,6 +113,23 @@ def text_on(name, image, t0, t1, color=(0.8, 0.82, 0.86), glow=0.6, hot=(1, 0.3,
     nt.links.new(add.outputs[0], cut.inputs[2])
     nt.links.new(cut.outputs[0], out.inputs[0])
     return m
+
+
+def boost(mats, keys):
+    """multiply the emission of each material by a keyed factor, for one flare across a whole shot"""
+    for m in mats:
+        nt = m.node_tree
+        v = nt.nodes.new('ShaderNodeValue')
+        for f, k in keys:
+            v.outputs[0].default_value = k
+            v.outputs[0].keyframe_insert('default_value', frame=f)
+        for n in list(nt.nodes):
+            sock = {'BSDF_PRINCIPLED': 'Emission Strength', 'EMISSION': 'Strength'}.get(n.type)
+            if not sock:
+                continue
+            i = n.inputs[sock]
+            x = _math(nt, 'MULTIPLY', i.links[0].from_socket if i.links else i.default_value, v.outputs[0])
+            nt.links.new(x, i)
 
 
 def prisms(segs, mat, name='strokes'):
