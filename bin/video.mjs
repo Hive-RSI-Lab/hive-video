@@ -8,7 +8,7 @@
    video render FILM.mjs [ARGS...]          runs a film script with VIDEO_KIT set (import from it); checks the kit first
                                             unless a pass for this exact kit is stamped
    video stutters MP4 [--allow A-B,...]     frozen frames inside a move, and uneven motion (jumps, too-fast moves,
-                                            pops), in seconds. Exit 1 on any stutter or jerk. A-B are seconds to skip
+                                            pops), in seconds. Exit 1 on any stutter, jerk or flash frame. A-B are seconds to skip
    video sheet MP4 PNG [N]                  a contact sheet of N frames (default 12): look at it before posting
    video mp4 IN OUT [CRF]                   the web MP4 (H.264 High, CRF 24, faststart)
    video gif IN OUT [--max MB] [--width W] [--fps F] [--colours C]
@@ -43,14 +43,14 @@ function kitHash() {
 const stamp = () => join(CACHE, `checked-${kitHash()}`);
 
 async function measure(mp4, allowS) {
-  const { frameDiffs, stutters, jerks, jerkSpans } = await import(join(KIT, 'motion/measure.mjs'));
+  const { frameDiffs, stutters, jerks, jerkSpans, flashFrames } = await import(join(KIT, 'motion/measure.mjs'));
   const [n, dd] = execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=r_frame_rate', '-of', 'csv=p=0', mp4], { encoding: 'utf8' }).trim().split(/[,\s]/)[0].split('/').map(Number);
   const fps = n / (dd || 1);
   const d = frameDiffs(mp4);
   const allow = allowS.map(([a, b]) => [Math.floor(a * fps), Math.ceil(b * fps)]);
   const st = stutters(d).filter((i) => !allow.some(([a, b]) => i >= a && i <= b));
   const js = jerks(d, { allow });
-  return { fps, frames: d.length, stutters: st.map((i) => +(i / fps).toFixed(2)), jerks: jerkSpans(js, fps) };
+  return { fps, frames: d.length, stutters: st.map((i) => +(i / fps).toFixed(2)), jerks: jerkSpans(js, fps), flashes: flashFrames(d).filter((i) => !allow.some(([a, b]) => i >= a && i <= b)).map((i) => +(i / fps).toFixed(2)) };
 }
 
 const size = (f) => statSync(f).size / 1e6;
@@ -90,7 +90,8 @@ switch (cmd) {
     console.log(`${mp4}: ${m.frames} frames at ${m.fps} fps, ${(m.frames / m.fps).toFixed(2)} s`);
     console.log(`stutters: ${m.stutters.length}${m.stutters.length ? '  at ' + m.stutters.join(', ') + ' s' : ''}`);
     console.log(`jerks: ${m.jerks.length}${m.jerks.length ? '\n  ' + m.jerks.join('\n  ') : ''}`);
-    process.exit(m.stutters.length || m.jerks.length ? 1 : 0);
+    console.log(`flash frames: ${m.flashes.length}${m.flashes.length ? '  at ' + m.flashes.join(', ') + ' s' : ''}`);
+    process.exit(m.stutters.length || m.jerks.length || m.flashes.length ? 1 : 0);
   }
   case 'sheet': {
     const [mp4, png, n] = args;
@@ -124,12 +125,15 @@ switch (cmd) {
   }
   case 'blender': {
     const quality = flag('--quality', 'preview'), raw = args.includes('--raw');
-    const [shot, out] = args.filter((a) => a !== '--raw');
+    const [shot, out] = args.filter((a, i) => a !== '--raw' && !a.startsWith('--') && !['--quality', '--frames'].includes(args[i - 1]));
     if (!out) die('blender SHOT.py OUT/ [--quality preview|final] [--raw]');
     mkdirSync(out, { recursive: true });
     const env = { ...process.env, PYTHONPATH: [join(KIT, 'blender'), process.env.PYTHONPATH].filter(Boolean).join(':'), VIDEO_BLENDER: join(KIT, 'blender') };
-    const a = raw ? ['-b', '--factory-startup', '--python', resolve(shot), '-o', join(resolve(out), '####'), '-a']
-      : ['-b', '--factory-startup', '--python', resolve(shot), '--', '--quality', quality, '--render', resolve(out)];
+    const frames = flag('--frames');
+    // official builds ignore PYTHONPATH without --python-use-system-env; a shot that fails must stop, not render the default cube
+    const base = ['-b', '--python-use-system-env', '--factory-startup', '--python-exit-code', '1', '--python', resolve(shot)];
+    const a = raw ? [...base, '-o', join(resolve(out), '####'), '-a']
+      : [...base, '--', '--quality', quality, '--render', resolve(out), ...(frames ? ['--frames', frames] : [])];
     process.exit(run(process.env.BLENDER || 'blender', a, { env }));
   }
   case 'length': console.log(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', args[0]], { encoding: 'utf8' }).trim()); break;

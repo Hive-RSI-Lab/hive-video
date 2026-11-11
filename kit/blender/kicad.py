@@ -12,7 +12,9 @@ silkscreen (lines, shapes and text). A footprint's model is found by its file na
 board's lib/*.3dshapes beside kicad/), .wrl first, since VRML is what this reads; a model it cannot find is
 reported on stderr and left out. Board edge and holes come from Edge.Cuts and the footprints' NPTH pads; a slotted
 (oval) drill is drawn as its slot, and an NPTH slot goes into 'holes' as a round hole as wide as the slot.
-Needs Pillow for the images; the parsing is plain Python."""
+With --synth a footprint with no model, or whose model can't be found, gets a plain body instead: a box (a cylinder for a can) as big as
+its courtyard, F.Fab outline or pads, its height and finish guessed from the footprint's name (SYNTH). Mounting holes, test points, fiducials
+and solder jumpers get none. Needs Pillow for the images; the parsing is plain Python."""
 import glob
 import json
 import math
@@ -23,6 +25,16 @@ import sys
 MASK, COPPER, PAD, SILK, HOLE = (16, 48, 26, 255), (30, 84, 42, 255), (214, 176, 96, 255), (236, 236, 228, 255), (8, 8, 8, 255)
 FONT = '/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf'
 WRL_MM = 2.54                     # a KiCad VRML unit is 0.1 inch
+SKIP = re.compile(r'TestPoint|Fiducial|MountingHole|SolderJumper|NetTie|Logo', re.I)
+BLACK, TAN, METAL, CERAMIC = [.05, .05, .055, 1.], [.62, .5, .3, 1.], [.78, .78, .8, 1.], [.86, .84, .78, 1.]
+# footprint or model name -> (height mm, colour, metal, round). First match wins.
+SYNTH = [(r'USB_A', 14.0, METAL, True, False), (r'USB_C', 3.3, METAL, True, False), (r'microSD', 1.9, METAL, True, False),
+         (r'M\.2|2199230', 4.2, BLACK, False, False), (r'JST|PinHeader|S2B-PH', 6.0, CERAMIC, False, False),
+         (r'CP_Elec', 7.7, METAL, True, True), (r'Spacer', 2.0, METAL, True, False), (r'Module|MGM240', 2.2, METAL, True, False),
+         (r'IHLP', 3.0, BLACK, False, False), (r'XEL|XFL', 2.0, BLACK, False, False), (r'SW_|Switch', 2.5, BLACK, False, False),
+         (r'OSD|BGA', 1.3, BLACK, False, False), (r'Crystal|SiT', .8, METAL, True, False), (r'MMICT', 1.0, METAL, True, False),
+         (r'^C_', 1.2, TAN, False, False), (r'^L_', .8, BLACK, False, False), (r'^R_', .4, BLACK, False, False),
+         (r'LED', .6, CERAMIC, False, False), (r'.', .9, BLACK, False, False)]
 
 
 def sexpr(text):
@@ -268,7 +280,101 @@ def _texts(c, node, side, at=None):
         c.text(s, x, y, size, p[2] if len(p) > 2 else 0, SILK, mirror=side == 'B')
 
 
-def board(path, models=None, ppm=32):
+def _ref(fp):
+    for pr in kids(fp, 'property'):
+        if pr[1] == 'Reference':
+            return pr[2]
+    return next((t[2] for t in kids(fp, 'fp_text') if t[1] == 'reference'), '')
+
+
+def net_pads(pcb, ref, net):
+    """where part ref's pads on net are, [(x, y)] in board mm"""
+    out = []
+    for fp in kids(pcb, 'footprint'):
+        if _ref(fp) != ref:
+            continue
+        at = nums(fp, 'at') + [0.0]
+        for pad in kids(fp, 'pad'):
+            n = kid(pad, 'net')
+            if n and n[-1] == net:
+                out.append(tuple(place(at[:3], *nums(pad, 'at')[:2])))
+    return out
+
+
+def net_path(pcb, net, a, b, tol=0.02):
+    """The copper a signal really runs on from part a to part b: [(x0, y0, x1, y1, width)] in board mm, in order, and True; through vias, whichever
+    layer. If the net isn't routed all the way, the straight airwire and False, so a film can show the path and say which it was."""
+    pa, pb = net_pads(pcb, a, net), net_pads(pcb, b, net)
+    if not pa or not pb:
+        raise ValueError('%s has no pad of %s on %s or %s' % (net, net, a, b))
+    key = lambda p: (round(p[0] / tol), round(p[1] / tol))  # noqa: E731
+    graph, width = {}, {}
+    for s in kids(pcb, 'segment'):
+        if kid(s, 'net')[-1] != net:
+            continue
+        u, v = tuple(nums(s, 'start')), tuple(nums(s, 'end'))
+        graph.setdefault(key(u), []).append((key(v), v, nums(s, 'width')[0]))
+        graph.setdefault(key(v), []).append((key(u), u, nums(s, 'width')[0]))
+    near = lambda p: min(graph, key=lambda k: math.dist((k[0] * tol, k[1] * tol), p), default=None)  # noqa: E731
+    for src in pa:
+        k0 = near(src)
+        if k0 is None or math.dist((k0[0] * tol, k0[1] * tol), src) > 1.0:
+            continue
+        prev, todo = {k0: None}, [k0]
+        for k in todo:
+            for n, p, w in graph[k]:
+                if n not in prev:
+                    prev[n] = (k, p, w)
+                    todo.append(n)
+        for dst in pb:
+            k1 = min(prev, key=lambda k: math.dist((k[0] * tol, k[1] * tol), dst))
+            if math.dist((k1[0] * tol, k1[1] * tol), dst) > 1.0:
+                continue
+            path, k = [], k1
+            while prev[k]:
+                pk, p, w = prev[k]
+                path.append(((pk[0] * tol, pk[1] * tol), p, w))
+                k = pk
+            return [(u[0], u[1], v[0], v[1], w) for u, v, w in reversed(path)], True
+    best = min(((u, v) for u in pa for v in pb), key=lambda c: math.dist(*c))
+    return [(best[0][0], best[0][1], best[1][0], best[1][1], 0.2)], False
+
+
+def _fp_box(fp):
+    """a footprint's body outline in its own frame, (x0, y0, x1, y1) mm: its courtyard, else its Fab outline, else its pads"""
+    for layer in ('F.CrtYd', 'B.CrtYd', 'F.Fab', 'B.Fab'):
+        pts = []
+        for k in ('fp_line', 'fp_rect'):
+            for g in kids(fp, k):
+                if layer_of(g) == layer:
+                    pts += [nums(g, 'start'), nums(g, 'end')]
+        for g in kids(fp, 'fp_poly'):
+            if layer_of(g) == layer:
+                pts += [[float(xy[1]), float(xy[2])] for xy in kids(kid(g, 'pts'), 'xy')]
+        if pts:
+            xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+            return min(xs), min(ys), max(xs), max(ys)
+    pts = [nums(p, 'at')[:2] for p in kids(fp, 'pad')]
+    if not pts:
+        return None
+    w = max(max(nums(p, 'size')[:2]) for p in kids(fp, 'pad')) / 2
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    return min(xs) - w, min(ys) - w, max(xs) + w, max(ys) + w
+
+
+def _synth_mesh(w, d, h, rgba, metal, cyl):
+    """a body w x d x h mm standing on z=0, centred, as a parse_wrl shape; cyl makes it a 24-sided can"""
+    if cyl:
+        n, r = 24, min(w, d) / 2
+        v = [[r * math.cos(2 * math.pi * i / n), r * math.sin(2 * math.pi * i / n), z] for z in (0, h) for i in range(n)]
+        f = [[(i + 1) % n, i, n + i, n + (i + 1) % n] for i in range(n)] + [list(range(n))[::-1], [n + i for i in range(n)]]
+        return [[rgba, metal, [[round(c, 5) for c in p] for p in v], f]]
+    x, y = w / 2, d / 2
+    v = [[-x, -y, 0], [x, -y, 0], [x, y, 0], [-x, y, 0], [-x, -y, h], [x, -y, h], [x, y, h], [-x, y, h]]
+    return [[rgba, metal, v, [[3, 2, 1, 0], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]]]]
+
+
+def board(path, models=None, ppm=32, synth=False):
     """parse the board -> (images {'top', 'bottom'} or None without Pillow, parts.json's dict)"""
     pcb = sexpr(open(path, encoding='utf-8').read())
     box = outline(pcb)
@@ -288,6 +394,7 @@ def board(path, models=None, ppm=32):
             if pad[2] == 'np_thru_hole':
                 q = place(at, *nums(pad, 'at')[:2])
                 holes.append([round(q[0] - x0, 4), round(q[1] - y0, 4), min(_drill(pad))])
+        placed = False
         for m in kids(fp, 'model'):
             if hidden(m):
                 continue
@@ -301,6 +408,20 @@ def board(path, models=None, ppm=32):
             v3 = lambda k, d: [float(x) for x in (kid(kid(m, k) or [], 'xyz') or ['', d, d, d])[1:4]]  # noqa: E731
             parts.append({'ref': ref, 'model': stem, 'x': round(at[0] - x0, 4), 'y': round(at[1] - y0, 4), 'rot': at[2],
                           'side': side, 'offset': v3('offset', 0), 'rotate': v3('rotate', 0), 'scale': v3('scale', 1)})
+            placed = True
+        fpname = fp[1] if isinstance(fp[1], str) else ''
+        if synth and not placed and not SKIP.search(fpname):
+            b = _fp_box(fp)
+            if b and b[2] - b[0] > 0 and b[3] - b[1] > 0:
+                name = fpname.split(':')[-1]
+                modelnames = [os.path.splitext(os.path.basename(m[1]))[0] for m in kids(fp, 'model')]
+                h, col, metal, cyl = next((t[1:] for t in SYNTH if any(re.search(t[0], n) for n in modelnames + [name])), SYNTH[-1][1:])
+                w, d = max(.2, b[2] - b[0] - .5), max(.2, b[3] - b[1] - .5)   # the courtyard is about .25 mm outside the body
+                key = 'synth-%.2fx%.2fx%.2f-%s%s' % (w, d, h, '%02x%02x%02x' % tuple(int(c * 255) for c in col[:3]), 'c' if cyl else '')
+                meshes.setdefault(key, _synth_mesh(w, d, h, col, metal, cyl))
+                # the box is centred on the outline; a model's offset is in KiCad's model axes, y up
+                parts.append({'ref': ref, 'model': key, 'x': round(at[0] - x0, 4), 'y': round(at[1] - y0, 4), 'rot': at[2], 'side': side,
+                              'offset': [round((b[0] + b[2]) / 2, 4), round(-(b[1] + b[3]) / 2, 4), 0.0], 'rotate': [0.0, 0.0, 0.0], 'scale': [1.0, 1.0, 1.0]})
     data = {'size': [round(x1 - x0, 4), round(y1 - y0, 4)], 'holes': holes, 'meshes': meshes, 'parts': parts}
     try:
         import PIL  # noqa: F401
@@ -353,8 +474,9 @@ def main(argv):
     ap.add_argument('out')
     ap.add_argument('--models')
     ap.add_argument('--px-per-mm', type=float, default=32)
+    ap.add_argument('--synth', action='store_true', help='give a footprint with no usable model a plain body')
     a = ap.parse_args(argv)
-    imgs, data = board(a.pcb, a.models, a.px_per_mm)
+    imgs, data = board(a.pcb, a.models, a.px_per_mm, a.synth)
     if imgs is None:
         print('kicad.py: the images need Pillow', file=sys.stderr)
         return 1

@@ -60,6 +60,13 @@ def kit_cases():
           len(ev) == 10 and all(a != b and 0 <= a < 12 and 0 <= b < 12 and 1.0 <= t < 3.0 for t, a, b in ev), ev[:3])
     st = kit.gds_stack({'22/0': [], '34/0': []}, [('22/0', 0.3, 0.0), ('30/0', 0.2, 0.1), ('34/0', 0.5, 0.4)])
     check('K8 a layer the GDS lacks is skipped and takes no height', st == [('22/0', 0.0, 0.3), ('34/0', 0.7, 0.5)], st)
+    sp = kit.spring([(1, 0.0), (10, 0.0), (11, 10.0), (300, 10.0)], 1, 300, stiffness=0.02)
+    check('K9 spring starts at rest on the target, moves smoothly, settles, and barely overshoots',
+          sp[1] == 0.0 and sp[10] < 0.5 and abs(sp[300] - 10) < 0.05 and max(sp.values()) < 10.3
+          and max(abs(sp[f + 1] - sp[f]) for f in range(1, 300)) < 2.0, (sp[10], sp[300], max(sp.values())))
+    sv = kit.spring([(1, [0.0, 5.0]), (200, [4.0, 1.0])], 1, 200)
+    check('K9b a spring on a list of values moves each one', len(sv[200]) == 2 and sv[100][0] > 0 and sv[100][1] < 5, sv[100])
+    schem_cases()
     kicad_cases()
 
 
@@ -83,6 +90,57 @@ Shape{ appearance Appearance { material Material { diffuseColor 0.8 0.8 0.8 spec
 Shape{ appearance Appearance { material Material { diffuseColor 0.1 0.1 0.1 specularColor 0.9 0.9 0.9 } }
   geometry IndexedFaceSet { coord DEF co Coordinate { point [ 0 0 1, 1 0 1, 1 1 1 ] } coordIndex [ 0,1,2,-1 ] } }
 '''
+
+
+SCH = '''(kicad_sch (version 20231120) (paper "A4")
+  (lib_symbols (symbol "Device:R"
+    (symbol "R_0_1" (rectangle (start -1 -2.5) (end 1 2.5)))
+    (symbol "R_1_1"
+      (pin passive line (at 0 3.81 270) (length 1.27) (name "~") (number "1"))
+      (pin passive line (at 0 -3.81 90) (length 1.27) (name "~") (number "2")))))
+  (symbol (lib_id "Device:R") (at 50 50 0) (unit 1)
+    (property "Reference" "R1" (at 52 49 0) (effects (font (size 1.27 1.27))))
+    (property "Value" "10k" (at 52 51 0) (effects (font (size 1.27 1.27)) hide)))
+  (symbol (lib_id "Device:Gone") (at 90 90 0) (unit 1)
+    (property "Reference" "U9" (at 90 90 0)))
+  (wire (pts (xy 50 46.19) (xy 50 40)))
+  (wire (pts (xy 50 40) (xy 70 40)))
+  (wire (pts (xy 100 100) (xy 110 100)))
+  (junction (at 50 40))
+  (label "VBUS" (at 70 40 0) (effects (font (size 1.27 1.27)))))
+'''
+
+
+def schem_cases():
+    import schem
+    tmp = tempfile.mkdtemp(prefix='dv-schem-')
+    try:
+        path = os.path.join(tmp, 's.kicad_sch')
+        with open(path, 'w') as f:
+            f.write(SCH)
+        d = schem.parse(path)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    kinds = [g['kind'] for g in d['groups']]
+    check('S1 one symbol placed, and a symbol with no library entry is left out rather than guessed',
+          kinds.count('symbol') == 1 and d['groups'][0]['ref'] == 'R1' and list(d['size']) == [297, 210], d['groups'])
+    check('S2 touching wires are one net and a separate wire is another', kinds.count('net') == 2, kinds)
+    by = {}
+    for s in d['strokes']:
+        by.setdefault(s['kind'], []).append(s)
+    check('S3 body, both pins, three wires and the junction dot are all drawn',
+          len(by.get('body', [])) == 1 and len(by.get('pin', [])) == 2 and len(by.get('wire', [])) == 3 and len(by.get('dot', [])) == 1,
+          {k: len(v) for k, v in by.items()})
+    pin = [s['pts'] for s in by['pin']]
+    check('S4 a pin lands where the schematic puts it: y down on the sheet', any([50, 46.19] in [[round(c, 2) for c in p] for p in pts] for pts in pin), pin)
+    texts = {t['s']: t for t in d['texts']}
+    check('S5 a hidden value stays hidden; the reference and the net label are kept',
+          'R1' in texts and '10k' not in texts and texts['VBUS']['kind'] == 'label', sorted(texts))
+    net = d['groups'][texts['VBUS']['group']]
+    order = {int(k): v for k, v in d['order'].items()}
+    check('S6 the label belongs to its net, every group has a place in 0..1, and the part comes before its wire',
+          net['kind'] == 'net' and all(0 <= v <= 1 for v in order.values()) and len(order) == len(d['groups'])
+          and order[0] < order[texts['VBUS']['group']], order)
 
 
 def kicad_cases():
@@ -315,6 +373,39 @@ out('B7b satin parts: matte, uncoated plastic and metal that stays metal; gloss 
     sm['satin-metal0']['Metallic'].default_value == 1 and sm['satin-mat1']['Coat Weight'].default_value == 0
     and sm['satin-mat1']['Roughness'].default_value >= 0.6 and gm['parts-mat1']['Coat Weight'].default_value > 0,
     sorted(sm))
+
+import draw
+scene.reset(res=(64, 36))
+mat = draw.draw_on('c', rest=0.2)
+st = draw.prisms([(0, 0, 1, 0, 5, 9, .1, .05, 0), (1, 0, 1, 1, 9, 12, .1, .05, 0)], mat, 'st')
+t = [0.0] * len(st.data.vertices)
+st.data.attributes['t'].data.foreach_get('value', t)
+out('B8 prisms: 8 points and 5 faces a stroke, t runs from each stroke start frame to its end, and the ends push out',
+    len(st.data.vertices) == 16 and len(st.data.polygons) == 10 and t[0] == 5 and t[4] == 9 and t[8] == 9 and t[12] == 12
+    and abs(min(v.co.x for v in st.data.vertices) + 0.05) < 1e-6 and st.data.materials[0] is mat, t)
+def drop():
+    scene.reset(res=(64, 36))
+    bpy.ops.mesh.primitive_cube_add(size=.5, location=(0, 0, 3))
+    c = bpy.context.object
+    c.name = 'faller'
+    bpy.ops.mesh.primitive_plane_add(size=20, location=(0, 0, 0))
+    return c, bpy.context.object
+cache = os.path.join(os.environ['SC_TMP'], 'fall.json')
+c, fl = drop()
+draw.rigid_sim([c], 1, 60, cache=cache, passive=[fl])
+take = [tuple(c.matrix_world.translation) for f in (1, 20, 60) if bpy.context.scene.frame_set(f) is None]
+out('B9 rigid_sim: the body falls, comes to rest on the floor, and writes its cache',
+    os.path.exists(cache) and take[0][2] > 2.9 and 0.2 < take[2][2] < 0.3 and take[1][2] < take[0][2], take)
+c, fl = drop()
+draw.rigid_sim([c], 1, 60, cache=cache, passive=[fl])
+again = [tuple(c.matrix_world.translation) for f in (1, 20, 60) if bpy.context.scene.frame_set(f) is None]
+out('B9b with the cache there, the same take plays and no simulation world is made',
+    bpy.context.scene.rigidbody_world is None and all(abs(a - b) < 1e-3 for p, q in zip(take, again) for a, b in zip(p, q)), again)
+scene.reset(res=(64, 36))
+draw.bloom(threshold=1.0, strength=.5)
+out('B10 bloom gives the scene a compositor that reaches the output', bpy.context.scene.compositing_node_group is not None
+    and any(l.to_node.type in ('GROUP_OUTPUT', 'COMPOSITE') for l in bpy.context.scene.compositing_node_group.links),
+    None)
 
 '''
 

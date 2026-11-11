@@ -124,3 +124,32 @@ def gds_stack(layers, stack):
         out.append((key, z, thick))
         z += thick
     return out
+
+
+def spring(keys, f0, f1, stiffness=0.02, damping=None, sub=8):
+    """A value that chases a keyed target as a mass on a spring: {frame: value or [values]}. keys = [(frame, value), ...],
+    linear between keys. It speeds up, carries momentum and settles, so a camera moved this way has weight. damping
+    defaults to just under critical, a soft settle with almost no overshoot. Starts at rest on the target at f0."""
+    multi = isinstance(keys[0][1], (list, tuple))
+    pts = [(f, list(v) if multi else [v]) for f, v in keys]
+    if damping is None:
+        damping = 1.9 * math.sqrt(stiffness)
+
+    def target(f):
+        if f <= pts[0][0]:
+            return pts[0][1]
+        for (a, va), (b, vb) in zip(pts, pts[1:]):
+            if f <= b:
+                k = (f - a) / max(1e-9, b - a)
+                return [x + (y - x) * k for x, y in zip(va, vb)]
+        return pts[-1][1]
+    x, v, out = list(target(f0)), [0.0] * len(pts[0][1]), {}
+    dt = 1.0 / sub
+    for f in range(f0, f1 + 1):
+        out[f] = list(x) if multi else x[0]
+        for i in range(sub):
+            t = target(f + i * dt)
+            for j in range(len(x)):
+                v[j] += (stiffness * (t[j] - x[j]) - damping * v[j]) * dt
+                x[j] += v[j] * dt
+    return out

@@ -71,7 +71,8 @@ cursor moves on every frame. Nothing real may be in frame: every beat checks the
   z-index inside the outgoing shot never paints over the incoming one). `render.mjs` renders it: `renderFilm`
   (lossless PNG frames, one H.264 yuv420p encode, faststart), `renderStills`, and `frameCost`, which times a
   stretch so you can pick 30 or 60 fps from what the box can do now. `measure.mjs` makes "no stutter" a number:
-  `frameDiffs(mp4)` and `stutters(diffs)`, the frames that froze in the middle of a move. `sound.mjs` is the film's
+  `frameDiffs(mp4)` and `stutters(diffs)`, the frames that froze in the middle of a move. `flashFrames(diffs)` finds a single frame whose
+  brightness jumps away and straight back, like one black frame. `sound.mjs` is the film's
   sound effects, synthesized, so no recording and no licence: `mix(cues, {dur})` places its voices (a tap, a key,
   typing, a message, a whoosh for a camera move, a rise into a 3D shot, a chord for the end) on their times, and
   `master` brings the mix to -16 LUFS under -1.5 dBTP (`lufs`, `tp`) and muxes it in as AAC, copying the video, then

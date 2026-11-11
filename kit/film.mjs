@@ -361,7 +361,7 @@ const hex = (c) => c.replace(/^#/, '0x');
 const q = ['-hide_banner', '-loglevel', 'error', '-y'];
 /* THE ENCODER: plain ffmpeg (libx264) on the CPU. */
 const ff = (args) => execFileSync(FFMPEG, args, { stdio: 'inherit' });
-const H264 = ['-c:v', 'libx264', '-preset', 'slow', '-crf', '16', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'];
+const H264 = ['-c:v', 'libx264', '-preset', 'slow', '-crf', '16', '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-movflags', '+faststart'];
 
 /** The ffmpeg filter that adds the caption strip (CAPTION's look) to a frame, its words read from `textFile`.
  *  Exported for the selfcheck. */
@@ -409,7 +409,7 @@ window.draw = async ({ src, w, h, scale, bg, tx, ty, s, cursor, click }) => {
 </script></body></html>`;
 
 /* The one near-lossless encode between the frames and the film (stitch makes the final one). */
-const CLIP = ['-c:v', 'libx264', '-preset', 'medium', '-crf', '6', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'];
+const CLIP = ['-c:v', 'libx264', '-preset', 'medium', '-crf', '6', '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-movflags', '+faststart'];
 
 /** One beat's clip: every frame the director took, framed by the camera, with the cursor and the click ring drawn
  *  on it (the compositor above, in Chromium), then the image sequence encoded once at -framerate `fps`, near
@@ -439,7 +439,7 @@ export async function encodeClip(beat, { mp4, work, bg = '#ffffff' }) {
   writeFileSync(text, beat.caption || '');
   const vf = beat.caption ? captionFilter(text) + ',' : '';
   ff([...q, '-framerate', String(beat.fps), '-i', join(dir, 'c%06d.png'),
-    '-vf', `${vf}scale=trunc(iw/2)*2:trunc(ih/2)*2:out_range=tv,format=yuv420p`, ...CLIP, mp4]);
+    '-vf', `${vf}scale=trunc(iw/2)*2:trunc(ih/2)*2:out_range=tv:out_color_matrix=bt709,format=yuv420p,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709`, ...CLIP, mp4]);
   if (!process.env.DEMO_KEEP) rmSync(dir, { recursive: true, force: true });
   return beat.frames.length / beat.fps;
 }
@@ -463,7 +463,7 @@ export function encodeFrames(frames, { mp4, list, vf = '', fps = 30 }) {
     symlinkSync(resolve(kept[i].file), join(seq, `s${String(o + 1).padStart(6, '0')}${ext}`));
   }
   ff([...q, '-framerate', String(fps), '-i', join(seq, `s%06d${ext}`),
-    '-vf', `${vf ? vf + ',' : ''}scale=trunc(iw/2)*2:trunc(ih/2)*2:out_range=tv,format=yuv420p`, ...CLIP, mp4]);
+    '-vf', `${vf ? vf + ',' : ''}scale=trunc(iw/2)*2:trunc(ih/2)*2:out_range=tv:out_color_matrix=bt709,format=yuv420p,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709`, ...CLIP, mp4]);
   rmSync(seq, { recursive: true, force: true });
   return count / fps;
 }
@@ -477,12 +477,19 @@ export function fadeOffsets(lengths, fade) {
   return out;
 }
 
-/** The clips joined into one film, the film's one final encode: hard cuts by default (fade 0), or each crossfading
- *  into the next over `fade` s. The film runs at the first clip's frame rate. */
-export function stitch(clips, { mp4, fade = 0 }) {
+/** The clips joined into one film, the film's one final encode: hard cuts by default (fade 0), each crossfading
+ *  into the next over `fade` s, or hard cuts with only the last clip (the end card) crossfading in over `endFade` s. The film runs at the first clip's frame rate. */
+export function stitch(clips, { mp4, fade = 0, endFade = 0 }) {
   const probe = FFMPEG.replace(/ffmpeg$/, 'ffprobe');
   const r = execFileSync(probe, ['-v', 'error', '-select_streams', 'v', '-show_entries', 'stream=r_frame_rate', '-of', 'csv=p=0', clips[0]],
     { encoding: 'utf8' }).trim();
+  if (endFade && clips.length > 1) {  // the kit's own rule: hard cuts, one crossfade into the end card
+    const body = clips.slice(0, -1), at = body.reduce((s, c) => s + lengthOf(c), 0) - endFade;
+    const graph = body.map((_, i) => `[${i}:v]`).join('') + `concat=n=${body.length}:v=1:a=0,settb=AVTB,fps=${r}[b];` +
+      `[${body.length}:v]settb=AVTB,fps=${r}[e];[b][e]xfade=transition=fade:duration=${endFade}:offset=${at.toFixed(3)}[v]`;
+    ff([...q, ...clips.flatMap((c) => ['-i', c]), '-filter_complex', graph, '-map', '[v]', '-r', r, ...H264, mp4]);
+    return;
+  }
   if (clips.length === 1 || !fade) {
     const graph = clips.map((_, i) => `[${i}:v]`).join('') + `concat=n=${clips.length}:v=1:a=0[v]`;
     ff([...q, ...clips.flatMap((c) => ['-i', c]), '-filter_complex', graph, '-map', '[v]', '-r', r, ...H264, mp4]);
