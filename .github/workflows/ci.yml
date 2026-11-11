@@ -42,7 +42,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ffmpeg"
           curl -fsSL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-${FFMPEG_BUILD}.tar.xz" \
             | tar -xJ -C "$RUNNER_TEMP/ffmpeg" --strip-components=1
-      - run: echo "$RUNNER_TEMP/ffmpeg/bin" >> "$GITHUB_PATH"
+      # On PATH for the scripts that call `ffmpeg`, and as FFMPEG for the kit, which otherwise wants /usr/bin/ffmpeg.
+      - name: point the kit at it
+        run: |
+          echo "$RUNNER_TEMP/ffmpeg/bin" >> "$GITHUB_PATH"
+          echo "FFMPEG=$RUNNER_TEMP/ffmpeg/bin/ffmpeg" >> "$GITHUB_ENV"
       # The node modules kit/deps.mjs pins (Playwright's driver, xterm.js, Remotion), kept between runs.
       - uses: actions/cache@v4
         with:
