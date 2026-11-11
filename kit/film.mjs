@@ -9,7 +9,7 @@ one frame at a time, and each frame is captured at 2x after the clock has moved,
 capture only makes the render take longer. The cursor, the click ring and the camera are not in the page: each frame
 records where they are, and encodeClip draws them over the capture in a compositor page before one near-lossless
 encode of the image sequence; stitch makes the final encode. */
-import { mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, symlinkSync, existsSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -23,17 +23,19 @@ export const RESULT_MS = 800;
 export const MAX_FILM_S = 30;
 
 /* The caption, in one place: a strip of its own below (or above) the page, drawn by ffmpeg, so it never covers what
-it describes. One caption per beat. The look is the library's: its paper and ink, a rust mark before the words, and
-Source Serif. Change the look here and nowhere else; a surface with a font of its own sets CAPTION.font (or
-DEMO_CAPTION_FONT), and without either it is the system's semibold serif. */
+it describes. One caption per beat. The look is a dark strip in a dark app's own colour with pale words in Inter
+Medium, set in line with the app's content margin; CAPTION.accent (a hex) adds a small bar before the words. Change
+the look here and nowhere else; a surface with a font of its own sets CAPTION.font (or DEMO_CAPTION_FONT), and without
+Inter installed it is the system's semibold serif. */
 const serif = () => { try { return execFileSync('fc-match', ['-f', '%{file}', 'serif:semibold'], { encoding: 'utf8' }); } catch { return ''; } };
+const inter = () => { const f = '/usr/share/fonts/opentype/inter/Inter-Medium.otf'; try { return existsSync(f) ? f : ''; } catch { return ''; } };
 export const CAPTION = {
   at: 'bottom',                                  // 'bottom' or 'top'
-  height: 56,                                    // px; the page's viewport is the film's height less this
-  bg: '#FAF8F3', rule: '#DED8CA',                // the library's paper, and a hairline between it and the page
-  ink: '#15140F', accent: '#9C4221',             // the words, and the mark before them
-  font: process.env.DEMO_CAPTION_FONT || serif(), size: 23,
-  x: 36,                                         // left inset of the mark; the words follow it
+  height: 72,                                    // px; the page's viewport is the film's height less this
+  bg: '#131417', rule: '#2a2b31',                // dark strip matching a dark app, and a hairline between it and the page
+  ink: '#ECEBE6', accent: null,                  // the words; accent (a hex) draws a small bar before them, null for none
+  font: process.env.DEMO_CAPTION_FONT || inter() || serif(), size: 28,
+  x: 92,                                         // left inset of the words, in line with an app's content margin
 };
 
 // The director's zoom (CSS zoom on the root), so a layout made for 1280x720 fills a 1920x1080 viewport sharply.
@@ -361,19 +363,19 @@ const hex = (c) => c.replace(/^#/, '0x');
 const q = ['-hide_banner', '-loglevel', 'error', '-y'];
 /* THE ENCODER: plain ffmpeg (libx264) on the CPU. */
 const ff = (args) => execFileSync(FFMPEG, args, { stdio: 'inherit' });
-const H264 = ['-c:v', 'libx264', '-preset', 'slow', '-crf', '16', '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-movflags', '+faststart'];
+const H264 = ['-c:v', 'libx264', '-preset', 'slow', '-crf', process.env.VIDEO_CRF || '14', '-tune', 'film', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-movflags', '+faststart'];
 
 /** The ffmpeg filter that adds the caption strip (CAPTION's look) to a frame, its words read from `textFile`.
  *  Exported for the selfcheck. */
-export function captionFilter(textFile, cap = CAPTION) {
-  const H = cap.height, strip = cap.at === 'top' ? '0' : `ih-${H}`;
+export function captionFilter(textFile, cap = CAPTION, k = OUT_K) {
+  const H = Math.round(cap.height * k), x = Math.round(cap.x * k), size = Math.round(cap.size * k), strip = cap.at === 'top' ? '0' : `ih-${H}`;
   const pad = cap.at === 'top' ? `pad=iw:ih+${H}:0:${H}:color=${hex(cap.bg)}` : `pad=iw:ih+${H}:0:0:color=${hex(cap.bg)}`;
-  const rule = `drawbox=x=0:y=${cap.at === 'top' ? H - 1 : `ih-${H}`}:w=iw:h=1:color=${hex(cap.rule)}:t=fill`;
-  const bar = `drawbox=x=${cap.x}:y=${strip}+${Math.round(H / 2 - cap.size * 0.55)}:w=3:h=${Math.round(cap.size * 1.1)}:color=${hex(cap.accent)}:t=fill`;
+  const rule = `drawbox=x=0:y=${cap.at === 'top' ? H - 1 : `ih-${H}`}:w=iw:h=${Math.max(1, Math.round(k))}:color=${hex(cap.rule)}:t=fill`;
+  const bar = cap.accent ? `drawbox=x=${x}:y=${strip}+${Math.round(H / 2 - size * 0.55)}:w=${Math.round(3 * k)}:h=${Math.round(size * 1.1)}:color=${hex(cap.accent)}:t=fill,` : '';
   // drawtext calls the frame's height h, not ih
-  const words = `drawtext=fontfile='${cap.font}':textfile='${textFile}':fontsize=${cap.size}:fontcolor=${hex(cap.ink)}:` +
-    `x=${cap.x + 16}:y=${cap.at === 'top' ? '0' : `h-${H}`}+(${H}-lh)/2:y_align=font`;
-  return [pad, rule, bar, words].join(',');
+  const words = `drawtext=fontfile='${cap.font}':textfile='${textFile}':fontsize=${size}:fontcolor=${hex(cap.ink)}:` +
+    `x=${x + (cap.accent ? Math.round(16 * k) : 0)}:y=${cap.at === 'top' ? '0' : `h-${H}`}+(${H}-lh)/2:y_align=font`;
+  return [pad, rule, bar + words].join(',');
 }
 
 /* The compositor's page: one canvas the film's size. draw() puts a captured frame (at `scale`x) where the camera
@@ -383,23 +385,23 @@ const COMPOSITOR = String.raw`<!doctype html><html><body style="margin:0;overflo
 <canvas id="c"></canvas><script>
 const c = document.getElementById('c'), g = c.getContext('2d');
 const ARROW = new Path2D('M3 2 L3 21 L8 16.5 L11.5 24 L14.8 22.6 L11.4 15.2 L18 15.2 Z');
-window.draw = async ({ src, w, h, scale, bg, tx, ty, s, cursor, click }) => {
-  if (c.width !== w) { c.width = w; c.height = h; }
+window.draw = async ({ src, w, h, scale, bg, tx, ty, s, cursor, click, k = 1 }) => {
+  if (c.width !== Math.round(w * k)) { c.width = Math.round(w * k); c.height = Math.round(h * k); c.style.width = w + 'px'; c.style.height = h + 'px'; }
   const im = new Image(); im.src = src; await im.decode();
   g.setTransform(1, 0, 0, 1, 0, 0);
-  g.fillStyle = bg; g.fillRect(0, 0, w, h);
+  g.fillStyle = bg; g.fillRect(0, 0, w * k, h * k);
   g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-  g.drawImage(im, tx, ty, (im.width / scale) * s, (im.height / scale) * s);
+  g.drawImage(im, tx * k, ty * k, (im.width / scale) * s * k, (im.height / scale) * s * k);
   if (click && click.age < 0.4) {
     const f = click.age / 0.4, e = 1 - Math.pow(1 - f, 2);
-    g.setTransform(s, 0, 0, s, tx, ty);
+    g.setTransform(s * k, 0, 0, s * k, tx * k, ty * k);
     g.globalAlpha = 0.9 * (1 - e);
     g.strokeStyle = '#9C4221'; g.lineWidth = 3;
     g.beginPath(); g.arc(click.x, click.y, 16.5 * (0.3 + 1.1 * e), 0, 2 * Math.PI); g.stroke();
     g.globalAlpha = 1;
   }
   if (cursor) {
-    g.setTransform(s, 0, 0, s, tx + s * (cursor.x - 3), ty + s * (cursor.y - 2));
+    g.setTransform(s * k, 0, 0, s * k, (tx + s * (cursor.x - 3)) * k, (ty + s * (cursor.y - 2)) * k);
     g.shadowColor = 'rgba(0,0,0,.35)'; g.shadowBlur = 3 * s; g.shadowOffsetY = 2 * s;
     g.fillStyle = '#111'; g.fill(ARROW);
     g.shadowColor = 'transparent';
@@ -409,6 +411,9 @@ window.draw = async ({ src, w, h, scale, bg, tx, ty, s, cursor, click }) => {
 </script></body></html>`;
 
 /* The one near-lossless encode between the frames and the film (stitch makes the final one). */
+/* Output size multiplier: the frames are captured at 2x, so a 1920x1080 film can be made at 2560x1440 (4/3) with real
+   detail. VIDEO_OUT_SCALE=2 makes 4K. Default 1 keeps the old size. */
+export const OUT_K = Number(process.env.VIDEO_OUT_SCALE || 1);
 const CLIP = ['-c:v', 'libx264', '-preset', 'medium', '-crf', '6', '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-movflags', '+faststart'];
 
 /** One beat's clip: every frame the director took, framed by the camera, with the cursor and the click ring drawn
@@ -431,8 +436,8 @@ export async function encodeClip(beat, { mp4, work, bg = '#ffffff' }) {
     await page.goto(pathToFileURL(html).href);
     for (const [i, f] of beat.frames.entries()) {
       const { tx, ty, s } = transformOf(f.view, beat.size);
-      await page.evaluate((o) => window.draw(o), { src: pathToFileURL(f.file).href, w, h, scale: beat.scale, bg, tx, ty, s, cursor: f.cursor, click: f.click });
-      const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', optimizeForSpeed: true, clip: { x: 0, y: 0, width: w, height: h, scale: 1 } });
+      await page.evaluate((o) => window.draw(o), { src: pathToFileURL(f.file).href, w, h, scale: beat.scale, bg, tx, ty, s, cursor: f.cursor, click: f.click, k: OUT_K });
+      const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', optimizeForSpeed: true, clip: { x: 0, y: 0, width: w, height: h, scale: OUT_K } });
       writeFileSync(join(dir, `c${String(i + 1).padStart(6, '0')}.png`), Buffer.from(data, 'base64'));
     }
   } finally { await browser.close(); }

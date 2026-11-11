@@ -182,7 +182,7 @@ await check('firstDenied: finds a word in any case, and passes clean text', () =
 
 await check('captionFilter: the strip goes below the page by default and above it when asked', () => {
   const cap = { height: 60, at: 'bottom', bg: '#fff', rule: '#ccc', accent: '#a00', ink: '#111', size: 24, x: 40, font: '/f.otf' };
-  const bottom = captionFilter('/t.txt', cap), top = captionFilter('/t.txt', { ...cap, at: 'top' });
+  const bottom = captionFilter('/t.txt', cap, 1), top = captionFilter('/t.txt', { ...cap, at: 'top' }, 1);
   if (!/pad=iw:ih\+60:0:0:/.test(bottom)) throw new Error('bottom strip not padded below: ' + bottom);
   if (!/pad=iw:ih\+60:0:60:/.test(top)) throw new Error('top strip not padded above: ' + top);
 });

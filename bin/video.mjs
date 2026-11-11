@@ -11,6 +11,10 @@
                                             pops), in seconds. Exit 1 on any stutter, jerk or flash frame. A-B are seconds to skip
    video sheet MP4 PNG [N]                  a contact sheet of N frames (default 12): look at it before posting
    video mp4 IN OUT [CRF]                   the web MP4 (H.264 High, CRF 24, faststart)
+   video export IN DIR [site|x|linkedin|vertical ...]
+                                            presets from the master: site 1920x1080 CRF 23; x 1920x1080 <=8 Mbps (max 140 s);
+                                            linkedin 1920x1080 CRF 21; vertical 1080x1920 (the film centred on a dark
+                                            canvas, no crop). Default: all four. Names are IN's name plus the preset.
    video gif IN OUT [--max MB] [--width W] [--fps F] [--colours C]
                                             a GIF; with --max (default 3) it steps width, fps and colours down from
                                             960 px / 12 fps / 64 until the file fits, and says what it chose
@@ -22,7 +26,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -105,6 +109,28 @@ switch (cmd) {
     const [i, o, crf] = args;
     if (!o) die('mp4 IN OUT [CRF]');
     process.exit(run(join(KIT, 'web-encode.sh'), ['mp4', i, o, ...(crf ? [crf] : [])]));
+  }
+  case 'export': {
+    const [i, dir, ...which] = args;
+    if (!dir) die('export IN DIR [site|x|linkedin|vertical ...]');
+    mkdirSync(dir, { recursive: true });
+    const base = basename(i).replace(/\.[^.]+$/, '');
+    const enc = ['-c:v', 'libx264', '-preset', 'slow', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-movflags', '+faststart', '-an'];
+    const sc = 'scale=1920:1080:flags=lanczos';
+    const P = {
+      site: ['-vf', sc, '-crf', '23'],
+      x: ['-vf', sc, '-crf', '20', '-maxrate', '8M', '-bufsize', '16M'],
+      linkedin: ['-vf', sc, '-crf', '21'],
+      vertical: ['-vf', 'scale=1080:-2:flags=lanczos,pad=1080:1920:0:(oh-ih)/2:color=0x131417', '-crf', '20'],
+    };
+    for (const n of which.length ? which : Object.keys(P)) {
+      if (!P[n]) die('unknown preset ' + n);
+      const o = join(dir, `${base}-${n}.mp4`);
+      const r = run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', i, ...P[n], ...enc, o]);
+      if (r) process.exit(r);
+      console.log(`${o}: ${size(o).toFixed(1)} MB`);
+    }
+    break;
   }
   case 'gif': {
     const max = Number(flag('--max', '3')), W = flag('--width'), F = flag('--fps'), C = flag('--colours');
