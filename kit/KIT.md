@@ -109,3 +109,10 @@ See `blender/README.md` for the helpers and `scene.shot_main`.
 ## Needs
 
 Node 18+, ffmpeg, python3, and for terminals tmux and bwrap. The first run installs the node modules (network once).
+
+## Finish settings (Nov 2026)
+
+- `CAPTION` (dark strip, Inter Medium) and `OUT_K` are exported from `film.mjs`. `VIDEO_OUT_SCALE` (default 1) scales
+  the output: 1.3333 gives 2560x1440, 2 gives 4K. `VIDEO_CRF` sets the final encode (default 14, libx264 slow).
+- Film the page at `1080 - CAPTION.height` so the strip fills the frame exactly.
+- `video export IN DIR` writes the site, x, linkedin and vertical copies.

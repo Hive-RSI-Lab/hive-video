@@ -20,13 +20,25 @@ rings are drawn over the frames afterwards. The same script always makes the sam
    that never scrolled, an empty panel, the camera on the wrong thing.
 4. `video stutters OUT/film.mp4` must report 0 stutters. Jerks are fast or popping motion. A jerk is fine where
    content is meant to cut (a page switch, a message arriving); `--allow A-B` skips those spans.
-5. `video mp4 IN OUT.mp4` makes the web MP4 (H.264, faststart). `video gif IN OUT.gif --max 3` steps the width
+5. `video export IN.mp4 DIR` makes site, X, LinkedIn and vertical (1080x1920) copies from the master.
+   `video mp4 IN OUT.mp4` makes the web MP4 (H.264, faststart). `video gif IN OUT.gif --max 3` steps the width
    down from 960 px until the GIF fits under 3 MB.
 6. Iterate on timings in the script, never by trimming the video.
 
 The pace and the full director API are in `kit/KIT.md`; read it before your first film. Briefly: about 20 s in
 total; the thing working within 2 s; one camera move a beat (1.5-2x, 0.4-0.7 s); hold a result at least 0.8 s
 (`d.show`); type at about 30 keys a second.
+
+## Finish (what makes it look professional, not just smooth)
+
+Learned from reworking a launch reel that looked amateur for these reasons; each is now fixed in the kit:
+- **Size the page to the film.** Caption strip height is `CAPTION.height`; film the page at `1080 - CAPTION.height` high so the final frame is exactly 1920x1080 (or 2560x1440). A page filmed at full height plus a strip gets shrunk and letterboxed later: narrow, off-centre, soft.
+- **Render at 1440p:** `VIDEO_OUT_SCALE=1.3333` (frames are captured at 2x, so this is real detail); `2` for 4K. `VIDEO_CRF` (default 14). Encode once: stitch is the master; make web copies from it with `video mp4` / `web-encode.sh`, never re-encode a master twice.
+- **Caption:** a dark strip in the app's own colour, Inter Medium, left-aligned with the app's margin, no accent mark. One short line.
+- **Camera:** don't push in so far that the app's logo or the edge of a table is cropped; <=1.05x on full-screen app views, tighter zooms only onto one component.
+- **Badges** (e.g. a "replayed 300x" pill) go in free header space, never over rows.
+- **Cuts:** `stitch(clips, {fade: 0.25})` crossfades between app views; hard cuts only inside one view.
+- A typical run: `BEATS=a,b,c NAME=x.mp4 VIDEO_OUT_SCALE=1.3333 node reel.mjs OUT`, where `reel.mjs` is your film script.
 
 ## What makes it smooth (learned the hard way)
 
