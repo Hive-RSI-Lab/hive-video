@@ -1,0 +1,109 @@
+name: ci
+# The module's own checks (`video check`) on GitHub's standard hosted runner of a public
+# repository (free, no minute cap). The module train releases a commit only when a check
+# here is green, so this file is what lets hive-video have releases at all.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  # A PR's superseded run is cancelled; every push to main gets a group of its own.
+  group: ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions:
+  contents: read
+env:
+  VIDEO_CACHE: ${{ github.workspace }}/.video-cache
+  FFMPEG_BUILD: n8.1-latest-linux64-gpl-8.1
+jobs:
+  # The node selfcheck (the film kit, with Chromium and Remotion) and the web-encode selfcheck.
+  check:
+    # Pinned: ubuntu-latest moved to 26.04, whose package mirror on the runners failed to resolve (2026-11-11).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # A static ffmpeg from GitHub, not apt: the runners' Ubuntu mirror failed to resolve for
+      # every job on 2026-11-11, and a release download does not depend on it.
+      - uses: actions/cache@v4
+        id: ffmpeg
+        with:
+          path: ${{ runner.temp }}/ffmpeg
+          key: ffmpeg-${{ env.FFMPEG_BUILD }}-${{ runner.os }}
+      - name: fetch ffmpeg
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/ffmpeg"
+          curl -fsSL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-${FFMPEG_BUILD}.tar.xz" \
+            | tar -xJ -C "$RUNNER_TEMP/ffmpeg" --strip-components=1
+      # On PATH for the scripts that call `ffmpeg`, and as FFMPEG for the kit, which otherwise wants /usr/bin/ffmpeg.
+      - name: point the kit at it
+        run: |
+          echo "$RUNNER_TEMP/ffmpeg/bin" >> "$GITHUB_PATH"
+          echo "FFMPEG=$RUNNER_TEMP/ffmpeg/bin/ffmpeg" >> "$GITHUB_ENV"
+      # The node modules kit/deps.mjs pins (Playwright's driver, xterm.js, Remotion), kept between runs.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .video-cache
+            ~/.cache/ms-playwright
+          key: video-node-${{ runner.os }}-${{ hashFiles('kit/deps.mjs') }}
+      - name: Chromium for the pinned Playwright
+        run: |
+          v=$(node -e "import('./kit/deps.mjs').then(m => console.log(m.PINS['playwright-core']))")
+          npx --yes "playwright-core@$v" install chromium
+      - name: video check
+        shell: bash
+        run: node bin/video.mjs check 2>&1 | tee "$RUNNER_TEMP/check.log"; test "${PIPESTATUS[0]}" = 0
+      # Job logs need a login; annotations don't, so a Hive can read what failed.
+      - name: name the failing cases
+        if: failure()
+        shell: bash
+        run: |
+          grep -a -E '^(FAIL|not ok|Error|error)' "$RUNNER_TEMP/check.log" | head -20 | while IFS= read -r l; do
+            echo "::error::${l:0:400}"
+          done
+  # The Blender kit: its plain-python cases, then the scene cases inside `blender -b`.
+  blender:
+    # Pinned: ubuntu-latest moved to 26.04, whose package mirror on the runners failed to resolve (2026-11-11).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BLENDER_VERSION: 5.0.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # pip, not apt (see the note on ffmpeg); the runner image already has the X libraries Blender loads.
+      - name: python packages
+        run: python3 -m pip install --user --break-system-packages numpy pillow
+      - uses: actions/cache@v4
+        id: blender
+        with:
+          path: ${{ runner.temp }}/blender
+          key: blender-${{ env.BLENDER_VERSION }}-${{ runner.os }}
+      - name: fetch Blender
+        if: steps.blender.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/blender"
+          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_VERSION%.*}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            | tar -xJ -C "$RUNNER_TEMP/blender" --strip-components=1
+      - name: blender selfcheck
+        shell: bash
+        run: |
+          export BLENDER="$RUNNER_TEMP/blender/blender"
+          "$BLENDER" --version | head -1
+          python3 kit/blender/selfcheck.py 2>&1 | tee "$RUNNER_TEMP/check.log"; test "${PIPESTATUS[0]}" = 0
+      - name: name the failing cases
+        if: failure()
+        shell: bash
+        run: |
+          grep -a -E '^(FAIL|not ok|Error|error)' "$RUNNER_TEMP/check.log" | head -20 | while IFS= read -r l; do
+            echo "::error::${l:0:400}"
+          done
