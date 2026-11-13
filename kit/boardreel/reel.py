@@ -10,7 +10,9 @@ reel.json (see kit/KIT.md for a whole one): `source` (the board project, read on
 `enclosure`, `research` (paths in the source), `prompt` (the request as written, in the film folder), `title`,
 `drawings` (frame sequences made from the design: prompt, schematic, layout replay/trace), `shots` (film order:
 Blender shots and `slot` lines for real footage) and optionally `build` (scratch; default ./build), `film`
-(where the finished film goes), `allow` (stutter spans to skip), `length` [min, max] seconds.
+(where the finished film goes), `allow` (stutter spans to skip), `length` [min, max] seconds,
+`spp` {quality: samples} for every shot that sets none (a 1440p final at the board shots' 160 takes a day; 48 to 64
+with the denoiser costs a third of that).
 
 A shot line: {name, section, shot: paper|pages|board, frames, args, use, hold, xfade}. In args, `@NAME` is the
 folder of drawing NAME, or of a prep output (`@real` models, `@case` enclosure, `@pages` datasheets); `@NAME/x` a
@@ -181,6 +183,9 @@ def render(cfg, quality, only=None):
             continue
         out = CUT.shot_dir(cfg, line['name'], quality)
         args = expand(cfg, line.get('args', ''))
+        spp = cfg.get('spp', {}).get(quality)
+        if spp and not any(a.startswith('spp=') for a in args):
+            args.append('spp=%d' % spp)
         nf = int(line['frames'])
         if fresh(out, [line.get('shot'), nf, args]):
             continue

@@ -139,7 +139,8 @@ longest new trace followed). `shots` are the film in order: `paper` (a drawing o
 ramp=`), `pages` (`pages=@pages`), `board` (`fall real=@real` for the parts drop, `real=@real case=@case` for the
 case), each with `frames`, `section`, and optionally `use` [first, last], `hold`, `xfade`. A `{"slot": "real photos",
 "dir": "assets/real/photos"}` line is a place for real footage: left out while the folder is empty, filled on the
-next `reel.py cut` once files land. `projects/hifi-reel/reel.json` on H2 is a whole one.
+next `reel.py cut` once files land. `spp` ({"final": 48}) sets the samples for every shot that names none: the board shots' own 160 at
+1440p takes about a day, 48 with the denoiser a third of that. `projects/hifi-reel/reel.json` on H2 is a whole one.
 
 **The rules are checks, not advice.** `reel.py check` fails the film when any of these break:
 - every schematic cut adds ink on every frame it shows, first to last (`drawing`);
