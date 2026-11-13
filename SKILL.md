@@ -67,6 +67,14 @@ node graphs, a spring camera, cached rigid-body and cloth physics, bloom) are in
 `kit/blender/README.md`. `--frames A-B` renders part of a shot, `VIDEO_THREADS=N` caps its threads. Encode the frames with the kit's `encodeFrames` or ffmpeg, then cut them in with
 `stitch` (`endFade` crossfades into the end card only, the rest stay hard cuts).
 
+## Board reels
+
+A film of a circuit board being made (request, datasheets, schematic, layout, parts falling, case, end card) is one
+`reel.json` and `python3 kit/boardreel/reel.py build reel.json`: 720p previews, then one `--final` at 1440p. Its
+lessons are checks that fail the film (`reel.py check`): every schematic cut draws on every frame, one 3D model a
+footprint, drops speed up, no flash frames, the score re-made after any re-time, no model, count, hype or "it works"
+on screen. See "Board reels" in `kit/KIT.md`.
+
 ## Terminals
 
 `kit/term.mjs` records a real tmux/bash session in a sandbox with a made-up home and host, then replays it with
