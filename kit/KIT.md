@@ -143,7 +143,7 @@ case), each with `frames`, `section`, and optionally `use` [first, last] (only t
 "dir": "assets/real/photos"}` line is a place for real footage: left out while the folder is empty, filled on the
 next `reel.py cut` once files land. `spp` ({"final": 48}) sets the samples for every shot that names none: the board shots' own 160 at
 1440p takes about a day, 48 with the denoiser a third of that. A board shot with a shallow focus (a long lens, a low
-`fstop`) shows grain in the soft parts at 48: give it `spp=96` and a higher `fstop` (11) in its args; the denoiser
+`fstop`) shows grain in the soft parts at 48: give it `spp=96` and a deep `fstop` (22 for a long lens close in) in its args; the denoiser
 already runs with albedo and normal passes and the accurate prefilter. `heights` is the enclosure tool's
 heights.json: the stand-in bodies take their heights from it. `projects/hifi-reel/reel.json` on H2 is a whole one.
 
