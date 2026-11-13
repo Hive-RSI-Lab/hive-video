@@ -126,7 +126,8 @@ onto the board, the case closing, an end card. `kit/boardreel/` makes one from a
     python3 kit/boardreel/reel.py build reel.json            # 720p preview: prep, render, cut, score, check
     python3 kit/boardreel/reel.py build reel.json --final    # one 1440p final when the preview is right
 
-Each step skips what is done; a shot whose args change is rendered again, the rest resume. Every Blender run and
+Each step skips what is done; a shot or drawing whose args, inputs or kit code change is made again, the rest
+resume (a fix to a shot script re-renders the shots that use it, so a preview never shows stale frames). Every Blender run and
 drawing goes through `heavy timeout 3600` (or `$REEL_RUN`). Needs Blender, kicad-cli (`$KICAD_CLI`), ffmpeg, node,
 and for the case shot build123d (`cad_python`).
 
@@ -137,14 +138,20 @@ the request as written. `drawings` are frame sequences made from the design: `pr
 `sweep:FX0,FY0:FX1,FY1`), `layout` (the routing replayed from git history plus `also` save folders) and `trace` (the
 longest new trace followed). `shots` are the film in order: `paper` (a drawing on a desk, `seq=@NAME seq0= seqn=
 ramp=`), `pages` (`pages=@pages`), `board` (`fall real=@real` for the parts drop, `real=@real case=@case` for the
-case), each with `frames`, `section`, and optionally `use` [first, last], `hold`, `xfade`. A `{"slot": "real photos",
+case), each with `frames`, `section`, and optionally `use` [first, last] (only those frames are rendered),
+`hold`, `xfade`. A `{"slot": "real photos",
 "dir": "assets/real/photos"}` line is a place for real footage: left out while the folder is empty, filled on the
 next `reel.py cut` once files land. `spp` ({"final": 48}) sets the samples for every shot that names none: the board shots' own 160 at
-1440p takes about a day, 48 with the denoiser a third of that. `projects/hifi-reel/reel.json` on H2 is a whole one.
+1440p takes about a day, 48 with the denoiser a third of that. A board shot with a shallow focus (a long lens, a low
+`fstop`) shows grain in the soft parts at 48: give it `spp=96` and a higher `fstop` (11) in its args; the denoiser
+already runs with albedo and normal passes and the accurate prefilter. `heights` is the enclosure tool's
+heights.json: the stand-in bodies take their heights from it. `projects/hifi-reel/reel.json` on H2 is a whole one.
 
 **The rules are checks, not advice.** `reel.py check` fails the film when any of these break:
 - every schematic cut adds ink on every frame it shows, first to last (`drawing`);
-- every footprint has exactly one visible 3D model; missing ones are listed (`models`);
+- every footprint has at most one visible 3D model (`models`); a soldered part with none gets a stand-in block in
+  `prep` (`standin.py`: a dark moulded body, its size from the footprint name or its F.Fab outline, its height from
+  `heights`), so every part falls onto the board; the check lists them so the design can get real models;
 - in every drop the parts land faster and faster (`drops`);
 - `video stutters` finds no frozen frame or flash (`smooth`); the film's own cuts are skipped, and sharp moments (a part falling past the lens, a lid shutting) are listed with their times to look at, not failed;
 - the score was made from this cut's marks: `reel.py cut` always re-scores (`score`);

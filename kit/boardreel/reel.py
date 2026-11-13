@@ -11,7 +11,8 @@ reel.json (see kit/KIT.md for a whole one): `source` (the board project, read on
 `drawings` (frame sequences made from the design: prompt, schematic, layout replay/trace), `shots` (film order:
 Blender shots and `slot` lines for real footage) and optionally `build` (scratch; default ./build), `film`
 (where the finished film goes), `allow` (stutter spans to skip), `length` [min, max] seconds,
-`spp` {quality: samples} for every shot that sets none (a 1440p final at the board shots' 160 takes a day; 48 to 64
+`heights` (a part-heights file in the source, the enclosure tool's format: sizes the stand-in block drawn for
+any part the design has no 3D model for), `spp` {quality: samples} for every shot that sets none (a 1440p final at the board shots' 160 takes a day; 48 to 64
 with the denoiser costs a third of that).
 
 A shot line: {name, section, shot: paper|pages|board, frames, args, use, hold, xfade}. In args, `@NAME` is the
@@ -85,6 +86,28 @@ def fresh(d, spec):
     return os.path.exists(os.path.join(d, '.done'))
 
 
+def code(*files):
+    """a short hash of kit source files: a part of every spec, so a changed tool or shot script redraws what it made
+    (the second film's new palette did not reach drawings that were already made)"""
+    h = hashlib.sha1()
+    for f in files:
+        h.update(open(os.path.join(HERE, f), 'rb').read())
+    return h.hexdigest()[:12]
+
+
+def deps(cfg, args):
+    """the .spec of every build folder a shot's args point into, so a re-made input re-renders the shot"""
+    b, out = os.path.abspath(K.build_dir(cfg)), []
+    for a in args:
+        v = os.path.abspath(a.split('=', 1)[-1]) if '=' in a else ''
+        while v.startswith(b + os.sep):
+            if os.path.exists(os.path.join(v, '.spec')):
+                out.append(open(os.path.join(v, '.spec')).read())
+                break
+            v = os.path.dirname(v)
+    return out
+
+
 def done(d):
     open(os.path.join(d, '.done'), 'w').write('')
 
@@ -99,7 +122,7 @@ def models(pcb_path):
     out = {}
     for fp in kids(pcb, 'footprint'):
         ref = _ref(fp)
-        if not ref or ref.startswith('#'):
+        if not ref or ref.startswith('#') or any('board_only' in a for a in kids(fp, 'attr')):   # holes, logos
             continue
         out[ref] = sum(1 for m in kids(fp, 'model') if not hidden(m))
     return out
@@ -109,12 +132,16 @@ def prep(cfg):
     b = K.build_dir(cfg)
     board = K.src(cfg, cfg['board'])
     real = os.path.join(b, 'real')
-    if not fresh(real, [board, os.path.getmtime(board)]):
+    heights = K.src(cfg, cfg['heights']) if cfg.get('heights') else None
+    if not fresh(real, [board, os.path.getmtime(board), heights, heights and os.path.getmtime(heights), code('standin.py')]):
         cli = tool('kicad-cli')
         common = ['--subst-models', '--force']
         run([cli, 'pcb', 'export', 'glb', '--no-components', '--include-tracks', '--include-pads', '--include-zones',
              '--include-silkscreen', '--include-soldermask', '--cut-vias-in-body', *common, '-o', os.path.join(real, 'board.glb'), board])
-        run([cli, 'pcb', 'export', 'glb', '--no-board-body', *common, '-o', os.path.join(real, 'parts.glb'), board])
+        import standin   # every part shows: a model-less footprint gets a block of its own size
+        say('stand-in bodies:', ' '.join(standin.make(board, real, heights)) or 'none needed')
+        run([cli, 'pcb', 'export', 'glb', '--no-board-body', *common, '-o', os.path.join(real, 'parts.glb'),
+             os.path.join(real, 'standin.kicad_pcb')])
         done(real)
     if cfg.get('enclosure'):
         case = os.path.join(b, 'case')
@@ -140,7 +167,8 @@ def prep(cfg):
 
 def drawing(cfg, name, d):
     out = os.path.join(K.build_dir(cfg), 'drawings', name)
-    if fresh(out, d):
+    tool_py = d['tool'].split()[0] + '.py' if d['tool'] in ('prompt', 'schematic') else 'layout.py'
+    if fresh(out, [d, code(tool_py, 'common.py')]):
         return
     t, py = d['tool'], [sys.executable, os.path.join(HERE, d['tool'].split()[0] + '.py')]
     opt = lambda k, flag=None: ['--' + (flag or k), str(d[k])] if k in d else []   # noqa: E731
@@ -187,12 +215,16 @@ def render(cfg, quality, only=None):
         if spp and not any(a.startswith('spp=') for a in args):
             args.append('spp=%d' % spp)
         nf = int(line['frames'])
-        if fresh(out, [line.get('shot'), nf, args]):
+        a, b = line.get('use', [1, nf])
+        if [a, b] != [1, nf]:
+            args.append('span=%d,%d' % (a, b))
+        if fresh(out, [line.get('shot'), nf, args, code('shots/' + SHOTS[line['shot']], 'shots/_shot.py'), deps(cfg, args)]):
             continue
         run([blender, '-b', '--factory-startup', '-P', os.path.join(HERE, 'shots', SHOTS[line['shot']]), '--',
              out, nf, *args, 'quality=' + quality], stdout=subprocess.DEVNULL if os.environ.get('REEL_QUIET') else None)
-        if len(glob.glob(os.path.join(out, '[0-9]*.png'))) < nf:
-            raise SystemExit('reel: %s rendered %d of %d frames' % (line['name'], len(glob.glob(os.path.join(out, '[0-9]*.png'))), nf))
+        miss = [f for f in range(a, b + 1) if not os.path.exists(os.path.join(out, '%04d.png' % f))]
+        if miss:
+            raise SystemExit('reel: %s is missing %d of frames %d-%d' % (line['name'], len(miss), a, b))
         done(out)
 
 

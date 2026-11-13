@@ -72,7 +72,7 @@ node graphs, a spring camera, cached rigid-body and cloth physics, bloom) are in
 A film of a circuit board being made (request, datasheets, schematic, layout, parts falling, case, end card) is one
 `reel.json` and `python3 kit/boardreel/reel.py build reel.json`: 720p previews, then one `--final` at 1440p. Its
 lessons are checks that fail the film (`reel.py check`): every schematic cut draws on every frame, one 3D model a
-footprint, drops speed up, no flash frames, the score re-made after any re-time, no model, count, hype or "it works"
+footprint (a part with none gets a stand-in body sized from its footprint), drops speed up, no flash frames, the score re-made after any re-time, no model, count, hype or "it works"
 on screen. See "Board reels" in `kit/KIT.md`.
 
 ## Terminals

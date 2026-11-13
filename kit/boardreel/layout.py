@@ -22,7 +22,7 @@ import sys
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import INK, AMBER, PAPER, LIGHT, layer_colour, layer_order  # noqa: E402
+from common import INK, AMBER, PAPER, LIGHT, layer_colour, layer_head, layer_order  # noqa: E402
 import kicad  # noqa: E402
 from kicad import sexpr, kids, nums, layer_of, layers_of, place, arc_points  # noqa: E402
 
@@ -166,7 +166,7 @@ def replay(board, timeline, out, frames, width=4000, first=0, last=None, wipe=6.
             v0, va = int(len(vadd) * k / n), int(len(vadd) * (k + 1) / n)
             _copper(d, sh, add[:a0], vadd[:v0], layers)
             for s in add[a0:a]:
-                _seg(d, sh, s, INK, 4)
+                _seg(d, sh, s, layer_head(s[5], layers.index(s[5]) if s[5] in layers else 0), 4)
             for v in vadd[v0:va]:
                 _via(d, sh, v, INK)
             new.append(a - a0 + va - v0 + (len(gone) if k < fade else 0))
@@ -299,7 +299,7 @@ def trace(board, timeline, out, frames, event, width=4000, rev=False, head=3.0):
                         continue
                     f = lambda x, p=p, q=q, dp=dp, ln=ln: (p[0] + (q[0] - p[0]) * (x - dp) / ln, p[1] + (q[1] - p[1]) * (x - dp) / ln)  # noqa: E731
                     pa, pb = f(lo), f(hi)
-                    _seg(d, sh, (pa[0], pa[1], pb[0], pb[1], s[4], L), INK if ink else layer_colour(L, i), 4 if ink else 2)
+                    _seg(d, sh, (pa[0], pa[1], pb[0], pb[1], s[4], L), layer_head(L, i) if ink else layer_colour(L, i), 4 if ink else 2)
         fr.save(os.path.join(out, '%05d.png' % k), compress_level=1)
         track.append(sh.metres(*tip(min(D, LMAX))))
     json.dump(track, open(os.path.join(out, 'track.json'), 'w'))

@@ -91,6 +91,34 @@ def model_cases(tmp):
           m == {'R1': 1, 'J1': 2, 'H1': 0}, m)
 
 
+def standin_cases(tmp):
+    import standin
+    b = os.path.join(tmp, 'si', 'board.kicad_pcb')
+    os.makedirs(os.path.dirname(b), exist_ok=True)
+    text = open(os.path.join(FIX, 'tiny.kicad_pcb')).read().rstrip().rstrip(')') + """
+  (footprint "x:IND-SMD_L8.0-W8.0_X" (layer "F.Cu") (at 20 8)
+    (property "Reference" "L1" (at 0 -2 0) (layer "F.SilkS"))
+    (pad "1" smd rect (at -3 0) (size 2 3) (layers "F.Cu" "F.Mask"))
+    (pad "2" smd rect (at 3 0) (size 2 3) (layers "F.Cu" "F.Mask")))
+  (footprint "x:Logo" (layer "F.Cu") (at 30 5) (attr board_only exclude_from_pos_files exclude_from_bom)
+    (property "Reference" "G1" (at 0 -2 0) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu")))
+)
+"""
+    open(b, 'w').write(text)
+    hj = os.path.join(tmp, 'si', 'heights.json')
+    json.dump({'IND-SMD_L8.0-W8.0_X': {'above': 5.2}}, open(hj, 'w'))
+    out = os.path.join(tmp, 'si', 'out')
+    refs = standin.make(b, out, hj)
+    w = open(os.path.join(out, 'standin', 'L1.wrl')).read()
+    pts = [tuple(float(v) * 2.54 for v in l.strip(' ,]').split()) for l in w.split('point [')[1].split(']')[0].strip().split('\n')]
+    size = tuple(round(max(p[i] for p in pts) - min(p[i] for p in pts), 2) for i in range(3))
+    pcb = open(os.path.join(out, 'standin.kicad_pcb')).read()
+    check('R5b a part with no 3D model gets a stand-in block sized from its footprint name and the heights file; '
+          'modelled parts, holes and board-only art get none',
+          refs == ['L1'] and size == (8.0, 8.0, 5.2) and pcb.count('/standin/L1.wrl') == 1, (refs, size))
+
+
 def rule_cases(tmp):
     import checks
     import cut
@@ -191,7 +219,7 @@ def pages_cases(tmp):
 def main():
     tmp = tempfile.mkdtemp(prefix='br-check-')
     try:
-        for case in (drawing_cases, layout_cases, model_cases, rule_cases, score_cases, reel_cases, pages_cases):
+        for case in (drawing_cases, layout_cases, model_cases, standin_cases, rule_cases, score_cases, reel_cases, pages_cases):
             try:
                 case(tmp)
             except Exception as e:   # a case that crashes is a failure with its reason, not a stopped run

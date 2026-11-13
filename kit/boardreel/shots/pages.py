@@ -78,7 +78,7 @@ for i, p in enumerate(pages):
     rel = o.location.copy()
     rb.kinematic = True
     for f, k in ((1, 0.0), (f0 - 12, 0.0), (f0, 1.0)):
-        o.location = Vector((rel.x * 0.6, rel.y + 1.5, 0.75)).lerp(rel, k)
+        o.location = Vector((rel.x * 0.6, rel.y + 1.5, 0.32)).lerp(rel, k)   # low: high, a sheet crosses the lens as a dark blur
         o.keyframe_insert('location', frame=f)
     rb.keyframe_insert('kinematic', frame=1)
     rb.keyframe_insert('kinematic', frame=f0 - 1)

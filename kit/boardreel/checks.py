@@ -5,7 +5,8 @@ quietly break them. `reel.py check` (and `build`) runs them; exit 1 if any fails
 
   drawing     every paper shot on a schematic drawing adds ink on every frame it uses, first to last (a cut that
               opens or closes on a still drawing reads as a stall)
-  models      every footprint has exactly one visible 3D model (two draw the part doubled); none is reported
+  models      every footprint has at most one visible 3D model (two draw the part doubled); a part with none is
+              drawn as a stand-in block (standin.py), listed so the design can get a real model
   drops       in each fall shot the drops speed up: the gaps between landings in its last third are shorter than in
               its first
   smooth      `video stutters` on the film (the film's own cuts skipped): no frozen frames inside a move, no flash
@@ -135,7 +136,7 @@ def run(cfg, quality):
     m = reel.models(K.src(cfg, cfg['board']))
     two = sorted(r for r, n in m.items() if n > 1)
     none = sorted(r for r, n in m.items() if n == 0)
-    res.append(('models', not two, ('doubled: %s' % ' '.join(two) if two else 'one each') + ('; no model: %s' % ' '.join(none) if none else '')))
+    res.append(('models', not two, ('doubled: %s' % ' '.join(two) if two else 'one each') + ('; stand-in block: %s' % ' '.join(none) if none else '')))
     res += [('drops ' + n, ok, d) for n, ok, d in drops(cfg, quality)]
     if os.path.exists(p['film']):
         spans = list(cfg.get('allow', [])) + cut_spans(json.load(open(p['marks'])))

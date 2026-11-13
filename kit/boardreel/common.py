@@ -20,11 +20,11 @@ PAPER = (255, 255, 255)        # drawing paper (Blender multiplies it down to a 
 LIGHT = (176, 176, 172)        # outline, pads and silk under a layout replay: there, but quiet
 # one pastel a copper layer, drawn bottom first so the top layer reads on top
 COPPER = {
-    'F.Cu': (226, 120, 104), 'In1.Cu': (222, 178, 84), 'In2.Cu': (104, 176, 138),
-    'In3.Cu': (158, 140, 214), 'In4.Cu': (214, 140, 186), 'B.Cu': (102, 158, 222),
+    'F.Cu': (238, 164, 150), 'In1.Cu': (234, 204, 140), 'In2.Cu': (156, 206, 178),
+    'In3.Cu': (190, 178, 230), 'In4.Cu': (232, 178, 210), 'B.Cu': (154, 190, 234),
 }
 ORDER = ['B.Cu', 'In6.Cu', 'In5.Cu', 'In4.Cu', 'In3.Cu', 'In2.Cu', 'In1.Cu', 'F.Cu']
-SPARE = [(120, 190, 200), (200, 170, 120)]
+SPARE = [(160, 210, 216), (222, 196, 156)]
 
 # end card colours
 CARD_PAPER, CARD_INK, CARD_INK2 = (238, 237, 232), (21, 23, 26), (75, 78, 83)
@@ -51,6 +51,11 @@ def font(kind, size):
 
 def layer_colour(name, i=0):
     return COPPER.get(name, SPARE[i % len(SPARE)])
+
+
+def layer_head(name, i=0):
+    """a copper layer's colour while its trace is being laid: the same hue, deeper (black there reads as a layer of its own)"""
+    return tuple(int(c * 0.62) for c in layer_colour(name, i))
 
 
 def layer_order(names):

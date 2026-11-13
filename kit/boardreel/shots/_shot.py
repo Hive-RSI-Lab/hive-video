@@ -113,7 +113,7 @@ def ease(u, kind=None):
 
 
 def render(out, kv):
-    """every frame (a re-run fills in only the frames a killed run left) or just stills=a,b"""
+    """every frame, or span=a,b of them (a re-run fills in only the frames a killed run left), or just stills=a,b"""
     S = bpy.context.scene
     stills = [int(v) for v in kv['stills'].split(',')] if kv.get('stills') else []
     os.makedirs(out, exist_ok=True)
@@ -123,6 +123,8 @@ def render(out, kv):
             S.render.filepath = os.path.join(out, '%04d.png' % f)
             bpy.ops.render.render(write_still=True)
         return
+    if kv.get('span'):   # only the frames the cut uses: a shot trimmed to its middle need not pay for its ends
+        S.frame_start, S.frame_end = (int(v) for v in kv['span'].split(','))
     S.render.filepath = out.rstrip('/') + '/'
     S.render.use_overwrite = False
     bpy.ops.render.render(animation=True)

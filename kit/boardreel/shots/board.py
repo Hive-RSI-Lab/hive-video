@@ -36,7 +36,8 @@ FALL, CASE = 'fall' in pos, kv.get('case')
 ORB = int(kv.get('orbit', 0))
 S = K.setup(kv, NF + ORB, samples=48 if kv.get('quality', 'preview') == 'preview' else 160)
 S.cycles.use_adaptive_sampling = True
-S.cycles.adaptive_threshold = 0.02
+S.cycles.adaptive_threshold = float(kv.get('noise', 0.02 if kv.get('quality', 'preview') == 'preview' else 0.008))
+S.cycles.denoising_prefilter = 'ACCURATE'   # with the albedo and normal passes: the soft focus stays smooth, not grainy
 S.cycles.max_bounces = 8
 S.cycles.sample_clamp_indirect = 6
 REAL = kv['real']
@@ -51,6 +52,8 @@ def imp(name):
 def tune(objs, kind):
     """KiCad's flat CAD colours to finishes: green mask, gold copper, laminate; parts metal, gold or moulded"""
     seen = set()
+    big = {sl.material.name for o in objs if o.type == 'MESH' and max(o.dimensions) > 0.008   # metres
+           for sl in o.material_slots if sl.material}
     for o in objs:
         if o.type != 'MESH':
             continue
@@ -83,7 +86,8 @@ def tune(objs, kind):
             else:
                 I['Metallic'].default_value = 0
                 if sat < 0.25 and v > 0.4:                                # leads, shields, shells
-                    I['Metallic'].default_value, I['Roughness'].default_value = 1, 0.26
+                    # a big shell (a jack, a can) in mirror chrome reflects the white sweep and reads as glass: satin
+                    I['Metallic'].default_value, I['Roughness'].default_value = 1, 0.45 if m.name in big else 0.26
                     I['Base Color'].default_value = (v * 0.95 + 0.05,) * 3 + (1,)
                 elif r > bl * 1.6 and v > 0.5 and g > bl * 1.2:           # gold contacts
                     I['Metallic'].default_value, I['Roughness'].default_value = 1, 0.25
@@ -153,7 +157,7 @@ K.world(0.12)
 cam, cd = K.camera(float(kv.get('lens', 85)), float(kv.get('fstop', 20)))
 cd.sensor_width = 36
 tgt = C + Vector((0.004, -0.004, 0.0))
-blur = kv.get('blur', '0.5' if CASE else '')
+blur = kv.get('blur', '0.25' if CASE else '')   # 0.5 smeared the big lid into a see-through ghost
 if blur:   # a falling part smears over its real travel, so a landing is not a one-frame snap
     S.render.use_motion_blur = True
     S.render.motion_blur_shutter = float(blur)
