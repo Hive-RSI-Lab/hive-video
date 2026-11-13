@@ -145,7 +145,7 @@ next `reel.py cut` once files land. `projects/hifi-reel/reel.json` on H2 is a wh
 - every schematic cut adds ink on every frame it shows, first to last (`drawing`);
 - every footprint has exactly one visible 3D model; missing ones are listed (`models`);
 - in every drop the parts land faster and faster (`drops`);
-- `video stutters` finds no frozen frame, jerk or flash (`smooth`);
+- `video stutters` finds no frozen frame or flash (`smooth`); the film's own cuts are skipped, and sharp moments (a part falling past the lens, a lid shutting) are listed with their times to look at, not failed;
 - the score was made from this cut's marks: `reel.py cut` always re-scores (`score`);
 - the length is inside `length` (`length`);
 - nothing on screen names a model, gives a count, claims the hardware works, or is hype (`words`).

@@ -122,6 +122,11 @@ def rule_cases(tmp):
     src = open(os.path.join(HERE, 'cut.py')).read()
     check('R9 the end card builds in (no flash: it opens on bare paper) and says made by the hive, hivelab.ca',
           ink(first) == 0 and ink(last) > 200 and 'Made by the Hive' in src and 'hivelab.ca' in src, (ink(first), ink(last)))
+    spans = checks.cut_spans(dict(fps=30, shots=[dict(start=0), dict(start=16.0), dict(start=17.5)]))
+    out = 'frames: 900\nstutters: 0\njerks: 2\n  0.87-0.97 s fast\n  48.70 s jump\nflash frames: 0\n'
+    ok, bad = checks.smooth(out), checks.smooth(out.replace('stutters: 0', 'stutters: 1'))
+    check('R9b smooth: the film\'s own cuts are skipped; sharp moments are listed, not failed; a stutter fails',
+          spans == ['15.967-16.033', '17.467-17.533'] and ok[1] and '48.70 s jump' in ok[2] and not bad[1], (spans, ok, bad))
 
 
 def score_cases(tmp):

@@ -8,7 +8,8 @@ quietly break them. `reel.py check` (and `build`) runs them; exit 1 if any fails
   models      every footprint has exactly one visible 3D model (two draw the part doubled); none is reported
   drops       in each fall shot the drops speed up: the gaps between landings in its last third are shorter than in
               its first
-  smooth      `video stutters` on the film: no frozen frames inside a move, no jerks, no flash frames
+  smooth      `video stutters` on the film (the film's own cuts skipped): no frozen frames inside a move, no flash
+              frames; sharp moments are listed with their times to look at, not failed
   words       what the film says on screen (title, status, credit, labels) names no model, gives no count, claims
               nothing works, and is not hype
   score       the score was made from this cut's marks (re-time, re-score)
@@ -94,6 +95,26 @@ def drops(cfg, quality):
     return out
 
 
+def smooth(out):
+    """('smooth', ok, detail) from `video stutters` output: frozen frames inside a move and flash frames fail; sharp
+    moments (a part falling past the lens, a lid shutting) are listed to look at, not failed: the first film passed
+    review with 22 of them"""
+    num = lambda k: int((re.search(r'^%s: (\d+)' % k, out, re.M) or [0, -1])[1])   # noqa: E731
+    st, js, fl = num('stutters'), num('jerks'), num('flash frames')
+    sharp = re.findall(r'^\s+([\d.]+(?:-[\d.]+)? s \w+)$', out, re.M)
+    ok = st == 0 and fl == 0
+    return ('smooth', ok, 'stutters %d, flash frames %d, sharp moments %d%s' % (
+        st, fl, max(js, 0), (' (look at: %s)' % ', '.join(sharp[:8])) if sharp else ''))
+
+
+def cut_spans(marks):
+    """the film's own hard cuts, a frame either side, as stutter spans to skip: two paper shots cut together differ
+    too little for the detector to see a cut, so it reads them as a jump inside a move"""
+    fps = marks['fps']
+    return ['%.3f-%.3f' % ((s['start'] * fps - 1) / fps, (s['start'] * fps + 1) / fps)
+            for s in marks['shots'][1:]]
+
+
 def words(cfg):
     import cut
     said = [cfg.get('title', ''), cut.status(cfg), cfg.get('credit', '')]
@@ -117,9 +138,10 @@ def run(cfg, quality):
     res.append(('models', not two, ('doubled: %s' % ' '.join(two) if two else 'one each') + ('; no model: %s' % ' '.join(none) if none else '')))
     res += [('drops ' + n, ok, d) for n, ok, d in drops(cfg, quality)]
     if os.path.exists(p['film']):
-        allow = ['--allow', ','.join(cfg['allow'])] if cfg.get('allow') else []
+        spans = list(cfg.get('allow', [])) + cut_spans(json.load(open(p['marks'])))
+        allow = ['--allow', ','.join(spans)] if spans else []
         r = subprocess.run(['node', os.path.join(ROOT, 'bin', 'video.mjs'), 'stutters', p['film'], *allow], capture_output=True, text=True)
-        res.append(('smooth', r.returncode == 0, (r.stdout + r.stderr).strip().splitlines()[-1] if (r.stdout + r.stderr).strip() else ''))
+        res.append(smooth(r.stdout + r.stderr))
         stamp = json.load(open(p['stamp'])) if os.path.exists(p['stamp']) else {}
         same = stamp.get('marks') == hashlib.sha1(open(p['marks'], 'rb').read()).hexdigest()
         res.append(('score', same, 'made from this cut' if same else 'made from another cut: run reel.py cut'))
