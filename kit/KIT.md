@@ -154,6 +154,11 @@ then CUDA) with the official Blender build in ~/.cache/hive-video, which reel.py
 1.2 GB of card memory. `device=cpu` in a shot's args, or `REEL_DEVICE=cpu`, forces the CPU. `heights` is the enclosure tool's
 heights.json: the stand-in bodies take their heights from it. `projects/hifi-reel/reel.json` on H2 is a whole one.
 
+Long finals on a busy machine: memguard kills the biggest plain `heavy` job in a memory stall, and a 1440p board run holds
+about 3.5 GB of RAM, so it is often the one. A shot resumes until three runs in a row land no frame. For tier 1 work run
+the Blender jobs in the spared lane with short runs, so other tier 1 jobs wait at most one: `REEL_RUN="heavy --first timeout 1200"`.
+GPU runs take turns on the card through `flock ~/.cache/hive-video/gpu.lock`, the same lock `video blender` holds.
+
 **The rules are checks, not advice.** `reel.py check` fails the film when any of these break:
 - every schematic cut adds ink on every frame it shows, first to last (`drawing`);
 - every footprint has at most one visible 3D model (`models`); a soldered part with none gets a stand-in block in

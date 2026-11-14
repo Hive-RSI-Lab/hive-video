@@ -223,10 +223,13 @@ def render(cfg, quality, only=None):
             continue
         def missing():
             return [f for f in range(a, b + 1) if not os.path.exists(os.path.join(out, '%04d.png' % f))]
+        cpu = 'device=cpu' in args or os.environ.get('REEL_DEVICE') == 'cpu'
+        lock = os.path.expanduser('~/.cache/hive-video/gpu.lock')   # the card has room for one render: take turns, as `video blender` does
+        gpu = ['flock', lock] if not cpu and shutil.which('flock') and os.path.isdir(os.path.dirname(lock)) else []
         left, stuck = None, 0
         while True:   # a long shot outlives one run's time cap, and memguard kills the biggest job in a memory stall:
             try:      # Blender skips the frames on disk, so go again; give up after 3 runs in a row that land nothing
-                run([blender, '-b', '--factory-startup', '-P', os.path.join(HERE, 'shots', SHOTS[line['shot']]), '--',
+                run(gpu + [blender, '-b', '--factory-startup', '-P', os.path.join(HERE, 'shots', SHOTS[line['shot']]), '--',
                      out, nf, *args, 'quality=' + quality], stdout=subprocess.DEVNULL if os.environ.get('REEL_QUIET') else None)
                 break
             except SystemExit:
