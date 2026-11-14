@@ -102,7 +102,9 @@ cursor moves on every frame. Nothing real may be in frame: every beat checks the
 A shot that is modelled rather than filmed (a product turning, a logo, a 3D scene) is a Blender scene script: Python
 that builds the whole scene from an empty file at render time, so it needs no .blend and renders the same under any
 Blender version. `video blender SHOT.py OUT/ [--quality preview|final] [--frames A-B]` runs it in the local
-Blender on the CPU through `heavy` (assume no GPU). Set the engine, samples, resolution and file format in the
+Blender through `heavy`, on the GPU first (OptiX, then CUDA; the CPU only when the build sees no card or the
+frame does not fit; `VIDEO_DEVICE=cpu` forces it). It picks the official build in ~/.cache/hive-video before a distro
+Blender, because Ubuntu's Blender has no GPU support. Set the engine, samples, resolution and file format in the
 script. Try it with `video blender blender/test-scene.py $TMPDIR/frames --raw`: two 320x180 frames.
 See `blender/README.md` for the helpers and `scene.shot_main`.
 
