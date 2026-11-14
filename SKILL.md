@@ -60,7 +60,7 @@ Learned from reworking a launch reel that looked amateur for these reasons; each
 
 ## 3D shots (Blender)
 
-`video blender SHOT.py OUT/ [--quality preview|final]` renders a shot script on the CPU. Run it under your job limiter (`heavy` on H2),
+`video blender SHOT.py OUT/ [--quality preview|final]` renders a shot script on the GPU when the Blender build sees one (the official build does, a distro build usually does not), else on the CPU. Run it under your job limiter (`heavy` on H2),
 and run `--quality preview` first, because a final render takes minutes per second of film. The helpers (easing,
 camera with depth of field, light rig, a PCB from KiCad, a schematic that draws itself, GDS extrusion, a UI plane,
 node graphs, a spring camera, cached rigid-body and cloth physics, bloom) are in

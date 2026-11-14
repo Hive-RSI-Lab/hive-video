@@ -2,11 +2,12 @@
 
 A shot is a Python script run by `blender -b --factory-startup --python SHOT.py`; no .blend is ever saved or shipped.
 It builds the scene and sets the frame range and output, and stops there: whoever runs it renders (`video blender`,
-which runs shot_main below with --render on the CPU). Text a viewer must read is never rendered
+which runs shot_main below with --render, on the graphics card when Blender sees one, else on the CPU). Text a viewer must read is never rendered
 here; track() writes where each labelled thing lands on screen, frame by frame, so the compositor can set it.
 
     reset(res, fps, frames)             an empty scene: no default cube, light or camera
-    render_settings(quality, ...)       Cycles; preview (box CPU) or final (GPU) samples, motion blur, PNG RGBA out
+    render_settings(quality, ...)       Cycles on the card if there is one (render_device), samples, motion blur, PNG RGBA out
+    render_device(want)                 'gpu' (default, VIDEO_DEVICE overrides): OptiX, else CUDA, else the CPU; returns what it chose
     studio_rig(target, size)            soft key, fill and rim area lights and a dim world, aimed at target
     backdrop(color, size)               a seamless curved sweep behind and under the subject
     camera(lens, fstop, focus)          a camera with depth of field on a focus object
@@ -94,6 +95,39 @@ def reset(res=(1920, 1080), fps=30, frames=(1, 90)):
     return s
 
 
+def render_device(want=None):
+    """Put Cycles on the graphics card when this Blender can see one: OptiX first, then CUDA, else the CPU.
+    want (or VIDEO_DEVICE) is 'gpu' (the default), 'optix', 'cuda' or 'cpu'. Returns 'OPTIX', 'CUDA' or 'CPU'.
+    A distro Blender is often built without the card's kernels and lists only the CPU: use the official build.
+    The card is shared, so a scene that does not fit in its free memory fails the render; `video blender` then
+    runs the shot again on the CPU."""
+    want = (want or os.environ.get('VIDEO_DEVICE') or 'gpu').lower()
+    s = bpy.context.scene
+    s.cycles.device = 'CPU'
+    chosen = 'CPU'
+    if want != 'cpu':
+        try:
+            pr = bpy.context.preferences.addons['cycles'].preferences
+        except KeyError:
+            pr = None
+        for kind in (('OPTIX', 'CUDA') if want == 'gpu' else (want.upper(),)):
+            if pr is None:
+                break
+            try:
+                pr.compute_device_type = kind
+            except TypeError:      # this build has no such backend
+                continue
+            pr.get_devices()
+            if any(d.type == kind for d in pr.devices):
+                for d in pr.devices:
+                    d.use = d.type == kind      # the card only: adding the CPU slows a GPU render down
+                s.cycles.device = 'GPU'
+                chosen = kind
+                break
+    print('render_device: Cycles on %s%s' % (chosen, '' if chosen != 'CPU' or want == 'cpu' else ' (no card seen by this Blender)'), flush=True)
+    return chosen
+
+
 def render_settings(quality='preview', transparent=True, motion_blur=True, shutter=0.5, view='AgX', out=None):
     """view: 'AgX' for objects lit by the rig; 'Standard' when a UI plane must keep its exact colours."""
     if quality not in QUALITY:
@@ -101,6 +135,7 @@ def render_settings(quality='preview', transparent=True, motion_blur=True, shutt
     s = bpy.context.scene
     samples, pct = QUALITY[quality]
     s.render.engine = 'CYCLES'
+    render_device()
     s.cycles.samples = samples
     s.cycles.use_adaptive_sampling = True
     # Ubuntu's Blender is built without a denoiser; official builds have OIDN. The enum is dynamic, so enum_items is
@@ -701,3 +736,6 @@ def shot_main(build):
     if '--render' in opt:
         s.render.filepath = os.path.join(opt['--render'], '####')
         bpy.ops.render.render(animation=True)
+        last = os.path.join(opt['--render'], '%04d.png' % s.frame_end)
+        if s.render.image_settings.file_format == 'PNG' and not os.path.exists(last):
+            sys.exit('shot_main: the render stopped before frame %d (on the card: out of its memory?)' % s.frame_end)

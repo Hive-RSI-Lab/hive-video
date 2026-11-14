@@ -2,7 +2,11 @@
 
 3D shots for a demo film, built by Python scripts that `blender -b` runs. Nobody makes or ships a .blend file. A shot
 script builds its scene from these helpers and stops there. Whoever runs it renders: `video blender SHOT.py OUT/` runs the shot in
-local Blender on the CPU through `heavy` (assume no GPU).
+Blender through `heavy`, on the GPU first: `scene.render_device()` (called by `render_settings`) takes OptiX, then
+CUDA, then the CPU, and prints which one it got. `VIDEO_DEVICE=cpu|optix|cuda` forces one. A render that fails on the
+card is run again on the CPU by `video blender`. Card renders take turns: `video blender` holds `flock ~/.cache/hive-video/gpu.lock`
+while it runs, because two renders at once do not fit in a shared card's free memory. Anything else that renders on the card
+should take the same lock.
 
 | File | What it holds |
 |---|---|
@@ -37,9 +41,11 @@ A shot imports `kit.py` and `scene.py` from beside it, or from `VIDEO_BLENDER` (
   writes `OUT/0001.png`, `OUT/0002.png`... at half size with 16 samples. Ubuntu's Blender has no denoiser, so a
   preview is grainy, and Cycles at 1080p takes minutes a frame here.
 - **Final:** `video blender shot.py OUT/ --quality final` (or a file named `quality` beside the shot). Final is 256
-  samples at full size, which on a CPU is far too slow for 1080p: lower the samples in the shot, render
-  smaller, or use a stylised look (flat or emission materials, few bounces). Measure one frame first.
-- **Which Blender:** use the official build (`BLENDER=` points at it), because Ubuntu's has no denoiser. A preview is
+  samples at full size. On the card (RTX 5060 Ti) a 1440p board frame at 192 samples took about 30 s against 130 s on
+  20 CPU cores, in about 1.2 GB of card memory. Measure one frame first, and check the log line
+  `render_device: Cycles on ...` says OPTIX or CUDA.
+- **Which Blender:** `video blender` takes `BLENDER=`, else the newest official build in ~/.cache/hive-video, else the one on PATH.
+  Ubuntu's build has no GPU support and no denoiser, so it renders on the CPU only. A preview is
   then clean at about 24 samples. `VIDEO_THREADS=N` caps the render threads on a shared machine. `--frames A-B` renders
   part of a shot, so a job that timed out can be filled in without redoing it.
 - **Labels:** `-- --track labels.json` writes every tracked point's screen position, frame by frame, with the
