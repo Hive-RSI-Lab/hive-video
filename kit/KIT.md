@@ -144,7 +144,9 @@ case), each with `frames`, `section`, and optionally `use` [first, last] (only t
 next `reel.py cut` once files land. `spp` ({"final": 48}) sets the samples for every shot that names none: the board shots' own 160 at
 1440p takes about a day, 48 with the denoiser a third of that. A board shot with a shallow focus (a long lens, a low
 `fstop`) shows grain in the soft parts at 48: give it `spp=96` and a deep `fstop` (22 for a long lens close in) in its args; the denoiser
-already runs with albedo and normal passes and the accurate prefilter. `heights` is the enclosure tool's
+already runs with albedo and normal passes and the accurate prefilter. At 1440p 96 still shows grain in the blurred
+parts: a final wants `spp=192 noise=0.004` on the board shots (about 130 s a frame on 20 cores, twice 96). A shot
+longer than one run's time cap resumes by itself from the frames on disk. `heights` is the enclosure tool's
 heights.json: the stand-in bodies take their heights from it. `projects/hifi-reel/reel.json` on H2 is a whole one.
 
 **The rules are checks, not advice.** `reel.py check` fails the film when any of these break:

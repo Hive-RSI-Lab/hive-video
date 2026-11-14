@@ -220,9 +220,21 @@ def render(cfg, quality, only=None):
             args.append('span=%d,%d' % (a, b))
         if fresh(out, [line.get('shot'), nf, args, code('shots/' + SHOTS[line['shot']], 'shots/_shot.py'), deps(cfg, args)]):
             continue
-        run([blender, '-b', '--factory-startup', '-P', os.path.join(HERE, 'shots', SHOTS[line['shot']]), '--',
-             out, nf, *args, 'quality=' + quality], stdout=subprocess.DEVNULL if os.environ.get('REEL_QUIET') else None)
-        miss = [f for f in range(a, b + 1) if not os.path.exists(os.path.join(out, '%04d.png' % f))]
+        def missing():
+            return [f for f in range(a, b + 1) if not os.path.exists(os.path.join(out, '%04d.png' % f))]
+        left = None
+        while True:   # a long shot outlives one run's time cap: Blender skips the frames on disk, so go again while frames land
+            try:
+                run([blender, '-b', '--factory-startup', '-P', os.path.join(HERE, 'shots', SHOTS[line['shot']]), '--',
+                     out, nf, *args, 'quality=' + quality], stdout=subprocess.DEVNULL if os.environ.get('REEL_QUIET') else None)
+                break
+            except SystemExit:
+                now = len(missing())
+                if not now or (left is not None and now >= left):
+                    raise
+                left = now
+                say('%s stopped with %d frames to go; resuming' % (line['name'], now))
+        miss = missing()
         if miss:
             raise SystemExit('reel: %s is missing %d of frames %d-%d' % (line['name'], len(miss), a, b))
         done(out)
