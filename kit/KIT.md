@@ -146,7 +146,10 @@ next `reel.py cut` once files land. `spp` ({"final": 48}) sets the samples for e
 `fstop`) shows grain in the soft parts at 48: give it `spp=96` and a deep `fstop` (22 for a long lens close in) in its args; the denoiser
 already runs with albedo and normal passes and the accurate prefilter. At 1440p 96 still shows grain in the blurred
 parts: a final wants `spp=192 noise=0.004` on the board shots (about 130 s a frame on 20 cores, twice 96). A shot
-longer than one run's time cap resumes by itself from the frames on disk. `heights` is the enclosure tool's
+longer than one run's time cap resumes by itself from the frames on disk. Shots render on the GPU first (OptiX,
+then CUDA) with the official Blender build in ~/.cache/hive-video, which reel.py now picks before a distro Blender
+(Ubuntu's has no GPU support); a frame that took 130 s on 20 CPU cores took about 30 s on an RTX 5060 Ti, in about
+1.2 GB of card memory. `device=cpu` in a shot's args, or `REEL_DEVICE=cpu`, forces the CPU. `heights` is the enclosure tool's
 heights.json: the stand-in bodies take their heights from it. `projects/hifi-reel/reel.json` on H2 is a whole one.
 
 **The rules are checks, not advice.** `reel.py check` fails the film when any of these break:

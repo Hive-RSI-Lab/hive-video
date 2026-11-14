@@ -28,6 +28,20 @@ def setup(kv, frames, samples=None):
     q = kv.get('quality', 'preview')
     S.render.engine = 'CYCLES'
     S.cycles.device = 'CPU'
+    if kv.get('device', os.environ.get('REEL_DEVICE', 'gpu')) in ('gpu', 'optix', 'cuda'):   # GPU first (OptiX, then CUDA), the CPU when the build sees no card; device=cpu to force it
+        pr = bpy.context.preferences.addons['cycles'].preferences
+        for kind in ('OPTIX', 'CUDA'):
+            try:
+                pr.compute_device_type = kind
+                pr.get_devices()
+                if any(d.type == kind for d in pr.devices):
+                    for d in pr.devices:
+                        d.use = d.type == kind
+                    S.cycles.device = 'GPU'
+                    print('shot: rendering on', kind, flush=True)
+                    break
+            except TypeError:
+                continue
     S.cycles.samples = int(kv.get('spp', samples or SAMPLES[q]))
     S.cycles.use_denoising = True
     S.render.use_persistent_data = True

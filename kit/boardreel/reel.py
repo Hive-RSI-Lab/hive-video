@@ -61,17 +61,17 @@ def run(cmd, **kw):
 
 
 def tool(name):
-    """a program: $NAME (BLENDER, KICAD_CLI), the PATH, or the module's own Blender cache"""
+    """a program: $NAME (BLENDER, KICAD_CLI), the module's own Blender cache (for blender), or the PATH"""
     env = os.environ.get(name.upper().replace('-', '_'))
     if env:
         return env
-    w = shutil.which(name)
-    if w:
-        return w
-    if name == 'blender':
+    if name == 'blender':   # the official build first: a distro Blender often has no OptiX/CUDA and renders on the CPU
         c = sorted(glob.glob(os.path.expanduser('~/.cache/hive-video/blender-*/blender')))
         if c:
             return c[-1]
+    w = shutil.which(name)
+    if w:
+        return w
     raise SystemExit('reel: %s not found; set $%s' % (name, name.upper().replace('-', '_')))
 
 
