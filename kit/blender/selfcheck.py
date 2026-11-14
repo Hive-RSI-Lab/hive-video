@@ -434,9 +434,20 @@ def scene_cases():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def boardreel_cases():
+    """the board reel kit's own cases (kit/boardreel/selfcheck.py), counted with these"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('boardreel_selfcheck', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'boardreel', 'selfcheck.py'))
+    br = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(br)
+    br.main()
+    RESULTS.extend(br.RESULTS)
+
+
 if __name__ == '__main__':
     kit_cases()
     scene_cases()
+    boardreel_cases()
     bad = RESULTS.count(False)
     print('demo-video blender selfcheck: %d passed, %d failed' % (len(RESULTS) - bad, bad))
     sys.exit(1 if bad else 0)

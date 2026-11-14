@@ -118,3 +118,59 @@ Node 18+, ffmpeg, python3, and for terminals tmux and bwrap. The first run insta
   the output: 1.3333 gives 2560x1440, 2 gives 4K. `VIDEO_CRF` sets the final encode (default 14, libx264 slow).
 - Film the page at `1080 - CAPTION.height` so the strip fills the frame exactly.
 - `video export IN DIR` writes the site, x, linkedin and vertical copies.
+
+## Board reels
+
+A board reel is a 45 to 70 s film of a circuit board being made, from the design's own files: the request typed,
+the datasheets read, the schematic drawn stroke by stroke, the layout replayed from its history, the parts falling
+onto the board, the case closing, an end card. `kit/boardreel/` makes one from a single `reel.json`:
+
+    python3 kit/boardreel/reel.py build reel.json            # 720p preview: prep, render, cut, score, check
+    python3 kit/boardreel/reel.py build reel.json --final    # one 1440p final when the preview is right
+
+Each step skips what is done; a shot or drawing whose args, inputs or kit code change is made again, the rest
+resume (a fix to a shot script re-renders the shots that use it, so a preview never shows stale frames). Every Blender run and
+drawing goes through `heavy timeout 3600` (or `$REEL_RUN`). Needs Blender, kicad-cli (`$KICAD_CLI`), ffmpeg, node,
+and for the case shot build123d (`cad_python`).
+
+**reel.json.** `source` is the board project (read only; every design path is inside it), `board` and `sheet` the
+KiCad files, `enclosure` a folder of case STEP/STL parts, `research` datasheet PDFs or a datasheets.md list, `prompt`
+the request as written. `drawings` are frame sequences made from the design: `prompt` (the request typed, its
+`phrases` marked), `schematic` (a `crop` of the sheet in mils, drawn in an `order`: `in:FX,FY`, `out:FX,FY` or
+`sweep:FX0,FY0:FX1,FY1`), `layout` (the routing replayed from git history plus `also` save folders) and `trace` (the
+longest new trace followed). `shots` are the film in order: `paper` (a drawing on a desk, `seq=@NAME seq0= seqn=
+ramp=`), `pages` (`pages=@pages`), `board` (`fall real=@real` for the parts drop, `real=@real case=@case` for the
+case), each with `frames`, `section`, and optionally `use` [first, last] (only those frames are rendered),
+`hold`, `xfade`. A `{"slot": "real photos",
+"dir": "assets/real/photos"}` line is a place for real footage: left out while the folder is empty, filled on the
+next `reel.py cut` once files land. `spp` ({"final": 48}) sets the samples for every shot that names none: the board shots' own 160 at
+1440p takes about a day, 48 with the denoiser a third of that. A board shot with a shallow focus (a long lens, a low
+`fstop`) shows grain in the soft parts at 48: give it `spp=96` and a deep `fstop` (22 for a long lens close in) in its args; the denoiser
+already runs with albedo and normal passes and the accurate prefilter. At 1440p 96 still shows grain in the blurred
+parts: a final wants `spp=192 noise=0.004` on the board shots (about 130 s a frame on 20 cores, twice 96). A shot
+longer than one run's time cap resumes by itself from the frames on disk. Shots render on the GPU first (OptiX,
+then CUDA) with the official Blender build in ~/.cache/hive-video, which reel.py now picks before a distro Blender
+(Ubuntu's has no GPU support); a frame that took 130 s on 20 CPU cores took about 30 s on an RTX 5060 Ti, in about
+1.2 GB of card memory. `device=cpu` in a shot's args, or `REEL_DEVICE=cpu`, forces the CPU. `heights` is the enclosure tool's
+heights.json: the stand-in bodies take their heights from it. `projects/hifi-reel/reel.json` on H2 is a whole one.
+
+Long finals on a busy machine: memguard kills the biggest plain `heavy` job in a memory stall, and a 1440p board run holds
+about 3.5 GB of RAM, so it is often the one. A shot resumes until three runs in a row land no frame. For tier 1 work run
+the Blender jobs in the spared lane with short runs, so other tier 1 jobs wait at most one: `REEL_RUN="heavy --first timeout 1200"`.
+GPU runs take turns on the card through `flock ~/.cache/hive-video/gpu.lock`, the same lock `video blender` holds.
+
+**The rules are checks, not advice.** `reel.py check` fails the film when any of these break:
+- every schematic cut adds ink on every frame it shows, first to last (`drawing`);
+- every footprint has at most one visible 3D model (`models`); a soldered part with none gets a stand-in block in
+  `prep` (`standin.py`: a dark moulded body, its size from the footprint name or its F.Fab outline, its height from
+  `heights`), so every part falls onto the board; the check lists them so the design can get real models;
+- in every drop the parts land faster and faster (`drops`);
+- `video stutters` finds no frozen frame or flash (`smooth`); the film's own cuts are skipped, and sharp moments (a part falling past the lens, a lid shutting) are listed with their times to look at, not failed;
+- the score was made from this cut's marks: `reel.py cut` always re-scores (`score`);
+- the length is inside `length` (`length`);
+- nothing on screen names a model, gives a count, claims the hardware works, or is hype (`words`).
+
+Defaults that keep the rest: light ink on paper with one pastel per copper layer, the score built from the cut's marks
+(a hit on every section cut, a tick on every landing), and an end card that reads the title, the build status from
+the slots (not yet built / built / on the bench, never "works") and "Made by the Hive  hivelab.ca". A `credit` is
+config only. `python3 kit/boardreel/selfcheck.py` runs the kit's cases on the tiny board in `kit/boardreel/fixture/`.
