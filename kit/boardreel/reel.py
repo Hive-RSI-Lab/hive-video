@@ -31,6 +31,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -222,18 +223,21 @@ def render(cfg, quality, only=None):
             continue
         def missing():
             return [f for f in range(a, b + 1) if not os.path.exists(os.path.join(out, '%04d.png' % f))]
-        left = None
-        while True:   # a long shot outlives one run's time cap: Blender skips the frames on disk, so go again while frames land
-            try:
+        left, stuck = None, 0
+        while True:   # a long shot outlives one run's time cap, and memguard kills the biggest job in a memory stall:
+            try:      # Blender skips the frames on disk, so go again; give up after 3 runs in a row that land nothing
                 run([blender, '-b', '--factory-startup', '-P', os.path.join(HERE, 'shots', SHOTS[line['shot']]), '--',
                      out, nf, *args, 'quality=' + quality], stdout=subprocess.DEVNULL if os.environ.get('REEL_QUIET') else None)
                 break
             except SystemExit:
                 now = len(missing())
-                if not now or (left is not None and now >= left):
+                stuck = stuck + 1 if left is not None and now >= left else 0
+                if not now or stuck >= 3:
                     raise
                 left = now
-                say('%s stopped with %d frames to go; resuming' % (line['name'], now))
+                say('%s stopped with %d frames to go; resuming%s' % (line['name'], now, ' in a minute' if stuck else ''))
+                if stuck:
+                    time.sleep(60)   # a stall that killed it may still be on
         miss = missing()
         if miss:
             raise SystemExit('reel: %s is missing %d of frames %d-%d' % (line['name'], len(miss), a, b))

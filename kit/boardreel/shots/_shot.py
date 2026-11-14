@@ -44,7 +44,7 @@ def setup(kv, frames, samples=None):
                 continue
     S.cycles.samples = int(kv.get('spp', samples or SAMPLES[q]))
     S.cycles.use_denoising = True
-    S.render.use_persistent_data = True
+    S.render.use_persistent_data = kv.get('persist', os.environ.get('REEL_PERSIST', '0')) == '1'   # off: a kept scene copy cost ~1.5 GB of RAM a frame-run, and memguard kills the biggest job in a stall
     S.render.resolution_x, S.render.resolution_y = SIZES[q]
     S.render.resolution_percentage = 100
     S.view_settings.view_transform = 'AgX'
