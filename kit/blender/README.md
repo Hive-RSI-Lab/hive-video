@@ -4,7 +4,9 @@
 script builds its scene from these helpers and stops there. Whoever runs it renders: `video blender SHOT.py OUT/` runs the shot in
 Blender through `heavy`, on the GPU first: `scene.render_device()` (called by `render_settings`) takes OptiX, then
 CUDA, then the CPU, and prints which one it got. `VIDEO_DEVICE=cpu|optix|cuda` forces one. A render that fails on the
-card is run again on the CPU by `video blender`.
+card is run again on the CPU by `video blender`. Card renders take turns: `video blender` holds `flock ~/.cache/hive-video/gpu.lock`
+while it runs, because two renders at once do not fit in a shared card's free memory. Anything else that renders on the card
+should take the same lock.
 
 | File | What it holds |
 |---|---|

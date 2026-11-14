@@ -164,7 +164,10 @@ switch (cmd) {
     const official = existsSync(CACHE) ? readdirSync(CACHE).filter((d) => /^blender-[\d.]+-linux-x64$/.test(d) && existsSync(join(CACHE, d, 'blender')))
       .sort((x, y) => y.localeCompare(x, undefined, { numeric: true }))[0] : undefined;
     const blender = process.env.BLENDER || (official ? join(CACHE, official, 'blender') : 'blender');
-    let code = run(blender, a, { env });
+    // one card render at a time: two at once do not fit in the card's free memory, so a second one waits here for the first
+    const lock = join(CACHE, 'gpu.lock'), cpu = (process.env.VIDEO_DEVICE || '').toLowerCase() === 'cpu';
+    const queued = !cpu && existsSync(CACHE) && spawnSync('flock', ['--version'], { stdio: 'ignore' }).status === 0;
+    let code = queued ? run('flock', [lock, blender, ...a], { env }) : run(blender, a, { env });
     // the card is shared: a scene that does not fit in its free memory fails there, so render it on the CPU instead
     if (code && !raw && !process.env.VIDEO_DEVICE) {
       console.error('video blender: the render failed; running it again on the CPU (VIDEO_DEVICE=cpu)');
