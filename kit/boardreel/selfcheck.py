@@ -201,6 +201,25 @@ def reel_cases(tmp):
     except SystemExit:
         refused = True
     check('R11c an @name that is neither a drawing nor a prep output is refused', refused)
+    fake = os.path.join(tmp, 'blender')   # writes every frame, orbit too, then dies as the time cap kills it
+    open(fake, 'w').write('#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done; shift\n'
+                          'n=$(($2 + $(echo "$@" | sed -n "s/.*orbit=\\([0-9]*\\).*/\\1/p")))\n'
+                          'for f in $(seq 1 $n); do : > $(printf "%s/%04d.png" "$1" $f); done; exit 124\n')
+    os.chmod(fake, 0o755)
+    cfg = cfg_in(tmp, shots=[dict(name='o', shot='board', frames=3, args='orbit=2')])
+    env = {k: os.environ.get(k) for k in ('BLENDER', 'REEL_RUN', 'REEL_DEVICE', 'REEL_QUIET')}
+    os.environ.update(BLENDER=fake, REEL_RUN='', REEL_DEVICE='cpu', REEL_QUIET='1')
+    try:
+        reel.render(cfg, 'preview')
+        o = reel.CUT.shot_dir(cfg, 'o', 'preview')
+        got = sorted(f for f in os.listdir(o) if f.endswith('.png')), os.path.exists(os.path.join(o, '.done'))
+    except SystemExit as x:
+        got = str(x)
+    finally:
+        for k, v in env.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    check('R11d a board shot counts its orbit frames, and a run the time cap ends after its last frame is done',
+          got == (['%04d.png' % f for f in range(1, 6)], True), got)
 
 
 def pages_cases(tmp):

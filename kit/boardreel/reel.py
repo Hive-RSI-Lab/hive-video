@@ -216,8 +216,9 @@ def render(cfg, quality, only=None):
         if spp and not any(a.startswith('spp=') for a in args):
             args.append('spp=%d' % spp)
         nf = int(line['frames'])
-        a, b = line.get('use', [1, nf])
-        if [a, b] != [1, nf]:
+        orb = next((int(w.split('=', 1)[1]) for w in args if w.startswith('orbit=')), 0)   # board.py renders the orbit after the frames
+        a, b = line.get('use', [1, nf + orb])
+        if [a, b] != [1, nf + orb]:
             args.append('span=%d,%d' % (a, b))
         if fresh(out, [line.get('shot'), nf, args, code('shots/' + SHOTS[line['shot']], 'shots/_shot.py'), deps(cfg, args)]):
             continue
@@ -235,7 +236,9 @@ def render(cfg, quality, only=None):
             except SystemExit:
                 now = len(missing())
                 stuck = stuck + 1 if left is not None and now >= left else 0
-                if not now or stuck >= 3:
+                if not now:
+                    break   # stopped by the time cap after the last frame it needs: that is done
+                if stuck >= 3:
                     raise
                 left = now
                 say('%s stopped with %d frames to go; resuming%s' % (line['name'], now, ' in a minute' if stuck else ''))
