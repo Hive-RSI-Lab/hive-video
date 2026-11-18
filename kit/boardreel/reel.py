@@ -15,9 +15,11 @@ Blender shots and `slot` lines for real footage) and optionally `build` (scratch
 any part the design has no 3D model for), `spp` {quality: samples} for every shot that sets none (a 1440p final at the board shots' 160 takes a day; 48 to 64
 with the denoiser costs a third of that).
 
-A shot line: {name, section, shot: paper|pages|board, frames, args, use, hold, xfade}. In args, `@NAME` is the
-folder of drawing NAME, or of a prep output (`@real` models, `@case` enclosure, `@pages` datasheets); `@NAME/x` a
-file or folder inside it. Every Blender run and every drawing goes through $REEL_RUN (default `heavy timeout 3600`
+A shot line: {name, section, shot: paper|pages|board|match, frames, args, use, hold, xfade, spp}; its own `spp`
+{quality: samples} replaces the film's for that shot (a shot matched to footage wants more than paper does). In args, `@NAME` is
+the folder of drawing NAME, of a prep output (`@real` models, `@case` enclosure, `@pages` datasheets), of anything
+else the film keeps in its build folder (`@match` a clip's solve, `@graded` graded footage), or `@film` the folder
+reel.json is in; `@NAME/x` a file or folder inside it. Every Blender run and every drawing goes through $REEL_RUN (default `heavy timeout 3600`
 when `heavy` is on the PATH), so a render cannot take the machine's memory. A shot whose args change is rendered
 again from scratch; one whose args did not resumes where it stopped.
 """
@@ -39,7 +41,7 @@ import common as K  # noqa: E402
 import cut as CUT  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(HERE))          # the module
-SHOTS = {'paper': 'paper.py', 'pages': 'pages.py', 'board': 'board.py'}
+SHOTS = {'paper': 'paper.py', 'pages': 'pages.py', 'board': 'board.py', 'match': 'match.py'}
 PREP = ('real', 'case', 'pages', 'timeline')
 
 
@@ -106,6 +108,10 @@ def deps(cfg, args):
                 out.append(open(os.path.join(v, '.spec')).read())
                 break
             v = os.path.dirname(v)
+        else:   # a file no prep step stamps (a clip's solve, a grade, a look file): its size and time stand in
+            f = os.path.abspath(os.path.expanduser(a.split('=', 1)[-1])) if '=' in a else ''
+            if os.path.isfile(f):
+                out.append([os.path.getsize(f), int(os.path.getmtime(f))])
     return out
 
 
@@ -154,8 +160,9 @@ def prep(cfg):
     if cfg.get('research'):
         pages = os.path.join(b, 'pages')
         srcs = [K.src(cfg, r) for r in cfg['research']]
-        if not fresh(pages, [srcs, cfg.get('pages', 3)]):
-            run([sys.executable, os.path.join(HERE, 'pages.py'), pages, *srcs, '--pages', cfg.get('pages', 3)])
+        if not fresh(pages, [srcs, cfg.get('pages', 3), code('pages.py')]):
+            run([sys.executable, os.path.join(HERE, 'pages.py'), pages, *srcs, '--pages', cfg.get('pages', 3),
+                 '--cache', os.path.join(b, 'pages-pdf')])      # outside `pages`: a changed rule fetches nothing again
             done(pages)
     tl = os.path.join(b, 'timeline')
     if not fresh(tl, [board, os.path.getmtime(board), cfg.get('also', [])]):
@@ -201,7 +208,11 @@ def expand(cfg, args):
             return os.path.join(b, 'drawings', name) + rest
         if name in PREP:
             return os.path.join(b, name) + rest
-        raise SystemExit('reel: @%s is neither a drawing nor %s' % (name, ', '.join(PREP)))
+        if name == 'film':                              # the film's own folder: a look file, a solve kept beside reel.json
+            return cfg['_dir'] + rest
+        if os.path.isdir(os.path.join(b, name)):        # what the film made for itself in the build folder: a clip's
+            return os.path.join(b, name) + rest         # solve (@match), graded footage (@graded)
+        raise SystemExit('reel: @%s is not a drawing, %s, film, or a folder in the build' % (name, ', '.join(PREP)))
     return re.sub(r'@([A-Za-z0-9_-]+)(/[^\s]*)?', at, args).split()
 
 
@@ -212,7 +223,7 @@ def render(cfg, quality, only=None):
             continue
         out = CUT.shot_dir(cfg, line['name'], quality)
         args = expand(cfg, line.get('args', ''))
-        spp = cfg.get('spp', {}).get(quality)
+        spp = line.get('spp', cfg.get('spp', {})).get(quality)   # a shot line's own `spp` wins: a matched shot needs more than paper
         if spp and not any(a.startswith('spp=') for a in args):
             args.append('spp=%d' % spp)
         nf = int(line['frames'])

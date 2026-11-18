@@ -82,7 +82,7 @@ def _spans(fs):
 def drops(cfg, quality):
     out = []
     for line in cfg['shots']:
-        if line.get('shot') != 'board' or 'fall' not in line.get('args', '').split():
+        if line.get('shot') not in ('board', 'match') or 'fall' not in line.get('args', '').split():
             continue
         ev = os.path.join(K.build_dir(cfg), quality, 'shots', line['name'], 'events.json')
         lands = sorted(set(json.load(open(ev))['lands'])) if os.path.exists(ev) else []

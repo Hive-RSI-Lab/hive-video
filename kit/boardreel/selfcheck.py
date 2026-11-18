@@ -143,7 +143,8 @@ def rule_cases(tmp):
     s1 = cut.status(c)
     fr = list(cut.slot_frames(c, c['shots'][0], (320, 180)))
     check('R8 slots: empty, the film says not yet built; a photo in, it says built (and never that it works)',
-          'NOT YET BUILT' in s0 and s1.startswith('BUILT') and len(fr) == 90 and fr[0].size == (320, 180)
+          'NOT YET BUILT' in s0 and s1.startswith('BUILT') and len(fr) == 90 and fr[0][1].size == (320, 180)
+          and fr[0][0].endswith('01.jpg')
           and not checks.words(dict(c, status=s1)), (s0, s1, len(fr)))
     first, last = cut.end_card(c, (640, 360), 0), cut.end_card(c, (640, 360), cut.END_FRAMES - 1)
     ink = lambda im: sum(1 for p in im.convert('L').tobytes() if p < 120)  # noqa: E731
@@ -233,6 +234,35 @@ def pages_cases(tmp):
     check('R12 datasheet pages: the vendor logo corners of a first page are blanked, the part named from the file',
           idx[0]['part'] == 'chip' and im.getpixel((20, 20))[0] > 240 and im.getpixel((830, 20))[0] > 240 and im.getpixel((425, 600))[0] < 20,
           (idx, im.getpixel((20, 20)), im.getpixel((830, 20))))
+    # a real front page: a title that starts inside the left corner, a logo in the right one, a shop button below
+    from PIL import ImageDraw
+    src2 = os.path.join(tmp, 'ds2')
+    os.makedirs(src2)
+    pg = Image.new('RGB', (850, 1100), (255, 255, 255))
+    d = ImageDraw.Draw(pg)
+    for x in range(200, 650, 17):
+        d.rectangle((x, 60, x + 11, 80), fill=(0, 0, 0))               # the title, letter by letter
+    d.rectangle((700, 20, 800, 60), fill=(0, 0, 0))                    # the logo
+    d.rectangle((400, 120, 440, 140), fill=(200, 20, 20))              # the shop button, in colour
+    d.rectangle((100, 600, 750, 610), fill=(0, 0, 0))                  # the text
+    pg.save(os.path.join(src2, 'amp_datasheet.png'))
+    idx = pages.prep(os.path.join(tmp, 'pages2'), [src2])
+    im = Image.open(os.path.join(tmp, 'pages2', idx[0]['file']))
+    px = {k: im.getpixel(v)[1] for k, v in dict(title_in_corner=(205, 70), title=(545, 70), logo=(750, 40),
+                                                button=(420, 130), text=(400, 605)).items()}
+    check('R12 datasheet pages: a title is never cut by the logo corner; the logo and a coloured button go whole',
+          px['title_in_corner'] < 60 and px['title'] < 60 and px['text'] < 60 and px['logo'] > 240 and px['button'] > 240, px)
+    wide = Image.new('RGB', (2200, 1100), (255, 255, 255))             # a drawing in landscape with a round mark on it
+    ImageDraw.Draw(wide).ellipse((900, 350, 1300, 750), fill=(0, 0, 0))
+    src3 = os.path.join(tmp, 'ds3')
+    os.makedirs(src3)
+    wide.save(os.path.join(src3, 'sheet-schematic.png'))
+    idx = pages.prep(os.path.join(tmp, 'pages3'), [src3])
+    im = Image.open(os.path.join(tmp, 'pages3', idx[0]['file'])).convert('L')
+    box = im.point(lambda v: 255 * (v < 128)).getbbox()
+    check('R12b a page is fitted on the sheet in its own proportions: a circle on a landscape drawing stays round',
+          im.size == (850, 1100) and box is not None and abs((box[2] - box[0]) - (box[3] - box[1])) <= 2
+          and abs((box[0] + box[2]) / 2 - 425) <= 2 and abs((box[1] + box[3]) / 2 - 550) <= 2, (im.size, box))
 
 
 def main():

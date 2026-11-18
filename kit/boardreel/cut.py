@@ -6,7 +6,8 @@ contact sheet. reel.py runs it; the score is laid on afterwards from the marks (
 The shot list is reel.json's `shots`, in film order. A shot line takes frames `use` [first, last] of its render
 (default all), holds the last picture `hold` frames with a slow push-in (a held picture never sits still), and may
 dissolve in over `xfade` frames. A `slot` line is a place for real footage: it takes every picture and clip in its
-folder, in name order, and is left out cleanly while the folder is empty. The end card's status line follows the
+folder (beside reel.json, or `@name` in the build), in name order, and is left out cleanly while the folder is
+empty. A clip plays its first `max` seconds (default 6). The end card's status line follows the
 slots: no photos, "design files only / not yet built"; photos, "built"; testing footage, "on the bench". It never
 says the hardware works.
 
@@ -28,6 +29,8 @@ import common as K  # noqa: E402
 PICS = ('.jpg', '.jpeg', '.png', '.webp')
 CLIPS = ('.mp4', '.mov', '.m4v', '.mkv', '.webm')
 END_FRAMES = 75
+# the film says what its colours are (BT.709 matrix and primaries, sRGB curve, video range): untagged, a player guesses
+TAGS = ['-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'iec61966-2-1', '-color_range', 'tv']
 STATUS = {'none': 'DESIGN FILES ONLY  /  NOT YET BUILT', 'photos': 'BUILT  /  NOT YET TESTED',
           'testing': 'BUILT  /  ON THE BENCH'}
 
@@ -61,13 +64,24 @@ def fit(im, size):
 
 
 def slot_files(cfg, line):
-    d = K.film(cfg, line['dir'])
+    """`dir` is beside reel.json (or absolute); `@name/...` is a folder in the build, e.g. footage the film graded"""
+    d = line['dir']
+    d = os.path.join(K.build_dir(cfg), d[1:]) if d.startswith('@') else K.film(cfg, d)
     fs = sorted(glob.glob(os.path.join(d, '*')))
     return [f for f in fs if f.lower().endswith(PICS + CLIPS)]
 
 
+def matrix(f):
+    """a camera clip with no colour tag is read as BT.709 when it is HD (ffmpeg alone would guess BT.601: a green cast)"""
+    r = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=height,color_space',
+                        '-of', 'csv=p=0', f], capture_output=True, text=True).stdout.strip().split(',')
+    untagged = len(r) < 2 or r[1] in ('', 'unknown')
+    return ':in_color_matrix=bt709' if untagged and r[0].isdigit() and int(r[0]) >= 720 else ''
+
+
 def slot_frames(cfg, line, size):
-    """real footage: each picture `each` seconds (default 3) with a slow push-in; each clip up to `max` seconds"""
+    """real footage as (file, frame): each picture `each` seconds (default 3) with a slow push-in; each clip up to
+    `max` seconds"""
     W, H = size
     each, cap = float(line.get('each', 3)), float(line.get('max', 6))
     for f in slot_files(cfg, line):
@@ -75,16 +89,17 @@ def slot_frames(cfg, line, size):
             base = fit(Image.open(f).convert('RGB'), size)
             n = int(round(each * K.FPS))
             for i in range(n):
-                yield zoom(base, 1 + 0.04 * (i / max(1, n - 1)) ** 1.2)
+                yield f, zoom(base, 1 + 0.04 * (i / max(1, n - 1)) ** 1.2)
         else:
             p = subprocess.Popen(['ffmpeg', '-loglevel', 'error', '-i', f, '-t', str(cap), '-vf',
-                                  'fps=%d,scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d' % (K.FPS, W, H, W, H),
+                                  'fps=%d,scale=%d:%d:force_original_aspect_ratio=increase:flags=lanczos%s,crop=%d:%d'
+                                  % (K.FPS, W, H, matrix(f), W, H),
                                   '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], stdout=subprocess.PIPE)
             while True:
                 b = p.stdout.read(W * H * 3)
                 if len(b) < W * H * 3:
                     break
-                yield Image.frombytes('RGB', (W, H), b)
+                yield f, Image.frombytes('RGB', (W, H), b)
             p.wait()
 
 
@@ -126,9 +141,9 @@ def end_card(cfg, size, i):
         d.text((x, 664 * s), status(cfg), font=K.font('mono', 26 * s), fill=K.CARD_INK2 + (255,), anchor='ls')
 
     def made(d, k):
-        fb = K.font('body', 34 * s)
-        d.text((x, H - 44 * s), 'Made by the Hive', font=fb, fill=K.CARD_INK + (255,), anchor='ls')
-        d.text((x + fb.getlength('Made by the Hive') + 36 * s, H - 44 * s), 'hivelab.ca', font=K.font('mono', 26 * s),
+        fb, y = K.font('body', 34 * s), H - 62 * s      # the line's descenders sit on the 5% safe margin, not under it
+        d.text((x, y), 'Made by the Hive', font=fb, fill=K.CARD_INK + (255,), anchor='ls')
+        d.text((x + fb.getlength('Made by the Hive') + 36 * s, y), 'hivelab.ca', font=K.font('mono', 26 * s),
                fill=K.CARD_INK2 + (255,), anchor='ls')
     put(0, title)
     put(5, rule)
@@ -159,13 +174,17 @@ def frames(cfg, quality, marks):
     size = K.SIZES[quality]
     last, n = None, 0
     for line in cfg['shots']:
-        if 'slot' in line:
-            start = n
-            for im in slot_frames(cfg, line, size):
+        if 'slot' in line:      # every picture and clip is a shot of its own in the marks: the score hits each cut
+            cur, k = None, 0
+            for f, im in slot_frames(cfg, line, size):
+                if f != cur:
+                    cur, k = f, k + 1
+                    marks['shots'].append(dict(name=line['slot'] if k == 1 else '%s %d' % (line['slot'], k),
+                                               section='slot', start=n / K.FPS, frames=0))
+                marks['shots'][-1]['frames'] += 1
                 yield line['slot'], im
                 n += 1
-            if n > start:
-                marks['shots'].append(dict(name=line['slot'], section='slot', start=start / K.FPS, frames=n - start))
+            if cur:
                 last = None
             continue
         d = shot_dir(cfg, line['name'], quality)
@@ -212,8 +231,8 @@ def cut(cfg, quality='preview', out=None, sheet=None):
     os.makedirs(os.path.dirname(out), exist_ok=True)
     tmp = out + '.part.mp4'
     ff = subprocess.Popen(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', '%dx%d' % (W, H),
-                           '-r', str(K.FPS), '-i', '-', '-c:v', 'libx264', '-crf', '17', '-pix_fmt', 'yuv420p',
-                           '-movflags', '+faststart', tmp], stdin=subprocess.PIPE)
+                           '-r', str(K.FPS), '-i', '-', '-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p',
+                           '-c:v', 'libx264', '-crf', '17', *TAGS, '-movflags', '+faststart', tmp], stdin=subprocess.PIPE)
     marks = dict(fps=K.FPS, shots=[], lands=[], hits=[])
     keep, n = [], 0
     for name, im in frames(cfg, quality, marks):

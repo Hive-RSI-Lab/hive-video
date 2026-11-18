@@ -139,8 +139,9 @@ the request as written. `drawings` are frame sequences made from the design: `pr
 `phrases` marked), `schematic` (a `crop` of the sheet in mils, drawn in an `order`: `in:FX,FY`, `out:FX,FY` or
 `sweep:FX0,FY0:FX1,FY1`), `layout` (the routing replayed from git history plus `also` save folders) and `trace` (the
 longest new trace followed). `shots` are the film in order: `paper` (a drawing on a desk, `seq=@NAME seq0= seqn=
-ramp=`), `pages` (`pages=@pages`), `board` (`fall real=@real` for the parts drop, `real=@real case=@case` for the
-case), each with `frames`, `section`, and optionally `use` [first, last] (only those frames are rendered),
+ramp=`), `pages` (`pages=@pages`: each datasheet page whole on its sheet, the front pages dealt first, every title left
+uncovered), `board` (`fall real=@real` for the parts drop, `real=@real case=@case` for the case), `match` (below),
+each with `frames`, `section`, and optionally `use` [first, last] (only those frames are rendered),
 `hold`, `xfade`. A `{"slot": "real photos",
 "dir": "assets/real/photos"}` line is a place for real footage: left out while the folder is empty, filled on the
 next `reel.py cut` once files land. `spp` ({"final": 48}) sets the samples for every shot that names none: the board shots' own 160 at
@@ -152,7 +153,29 @@ longer than one run's time cap resumes by itself from the frames on disk. Shots 
 then CUDA) with the official Blender build in ~/.cache/hive-video, which reel.py now picks before a distro Blender
 (Ubuntu's has no GPU support); a frame that took 130 s on 20 CPU cores took about 30 s on an RTX 5060 Ti, in about
 1.2 GB of card memory. `device=cpu` in a shot's args, or `REEL_DEVICE=cpu`, forces the CPU. `heights` is the enclosure tool's
-heights.json: the stand-in bodies take their heights from it. `projects/hifi-reel/reel.json` on H2 is a whole one.
+heights.json: the stand-in bodies take their heights from it, and a library model that is the wrong size for its part
+(a 7.7 mm can for a 13 mm capacitor) is given the part's real height, its straight wall made longer and not the whole
+model stretched (`shots/_shot.py`, `heights`). `projects/hifi-reel/reel.json` on H2 is a whole one.
+
+**A render that ends in the filmed board.** A `match` shot (`shots/match.py`, its header is the manual) stands the
+design's board in a filmed clip. The clip is solved beforehand into a match file (`match=@match/NAME.json`: a camera
+for every frame, the table's plane, the way the sunlight travels, the wood's colour in sun and shade, the filmed
+frames' folder); the solve is the film's own work, and `projects/hifi-reel/match/` on H2 is one for a board on a table
+and one for a closed case. The render then has the clip's lens and light, goes through the clip's grade (`lut=`), and
+`sweep=A,B` sends a line of the clip's own sunlight across the picture, the render ahead of it and the filmed frame
+behind it, so the cut out of the shot is the take itself. `studio=1` stands the render on a dark floor that fades to
+black, not on the filmed table: parts fall in a void and the line turns it into the room (it reads as a render becoming
+real, not as a drawing laid over a photograph). `fall` drops the parts, `case=@case upright=1` stands the printed case
+round the board and shuts it, `look=@film/FILE.json` names the finishes CAD colours cannot give, `probe=1` prints the
+render's light beside the clip's for tuning them. A shot line's own `spp` ({"final": 192}) replaces the film's for
+that shot. In args `@film` is the folder reel.json is in and `@NAME` any folder the film keeps in its build (`@match`,
+`@graded`); a file an arg names is part of the shot's stamp by its size and time, so a new solve renders the shot again.
+
+**Real footage.** A slot's `dir` may be `@NAME/...` in the build too (footage the film graded and steadied itself). Each
+picture and clip in a slot is a shot of its own in the marks, so the score lands on each cut (softly, with a felt
+fifth, once the film has resolved). A clip plays its first `max` seconds (default 6). The film is written with its
+colours named (BT.709, video range), and an HD camera clip with no colour tag is read as BT.709: ffmpeg alone would
+guess BT.601 and give it a green cast.
 
 Long finals on a busy machine: memguard kills the biggest plain `heavy` job in a memory stall, and a 1440p board run holds
 about 3.5 GB of RAM, so it is often the one. A shot resumes until three runs in a row land no frame. For tier 1 work run

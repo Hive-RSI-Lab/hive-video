@@ -68,6 +68,59 @@ def bsdf(m):
     return next((n for n in m.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None) if m and m.use_nodes else None
 
 
+def heights(refs, top, path, quiet=False):
+    """Every footprint's model at its real height above the board. path is prep's part_heights.json, {reference:
+    mm}; refs are the footprints' empties, top the board's top face (scene metres). A library model is often the
+    next size of the same package (a 10 x 7.7 mm can for a 10 x 13 mm capacitor), and beside the filmed part that
+    shows. A model more than half a millimetre and 8 % out is corrected, and not by scaling it: what lies above its
+    longest straight run moves up or down as it is, so a can gets a longer wall and keeps its base and its rim. A
+    model with no straight run to speak of is stretched from the board up. Parts on the underside are left alone.
+    Returns {reference: (was, now)} in mm."""
+    import json
+    import numpy as np
+    if not path or not os.path.exists(path):
+        return {}
+    want, out = json.load(open(path)), {}
+    for ref in refs:
+        name = ref.name.split('.')[0]
+        obs = [o for o in ref.children_recursive if o.type == 'MESH' and len(o.data.vertices)]
+        if name not in want or not obs or abs(ref.matrix_world.translation.z - top) > 2e-4:
+            continue
+        cos, zs = [], []
+        for o in obs:
+            co = np.zeros(len(o.data.vertices) * 3, np.float64)
+            o.data.vertices.foreach_get('co', co)
+            mw = np.array(o.matrix_world)
+            cos.append(co.reshape(-1, 3))
+            zs.append((cos[-1] @ mw[2, :3] + mw[2, 3] - top) * 1000.0)
+        was, now = max(z.max() for z in zs), float(want[name])
+        d = now - was
+        if was <= 0.05 or abs(d) <= max(0.5, 0.08 * now):
+            continue
+        lv = np.unique(np.round(np.concatenate([z[z > 0.05] for z in zs]), 3))
+        gap = np.diff(lv)
+        i = int(gap.argmax()) if len(gap) else -1
+        run = i >= 0 and gap[i] >= 0.3 * was and gap[i] + d >= 0.2      # a straight run, and one that is still there after
+        for o, co, z in zip(obs, cos, zs):
+            if o.data.users > 1:                                        # another footprint wears the same model
+                o.data = o.data.copy()
+            if run:
+                move = np.where(z > lv[i] + 1e-3, d, 0.0)
+            else:
+                move = np.maximum(z, 0.0) * (now / was - 1.0)
+            up = np.linalg.inv(np.array(o.matrix_world)[:3, :3])[:, 2]  # the scene's up in the model's own frame
+            co += (move / 1000.0)[:, None] * up[None, :]
+            o.data.vertices.foreach_set('co', co.ravel())
+            o.data.update()
+        out[name] = (round(float(was), 2), now)
+        if not quiet:
+            print('shot: %s is %.1f mm in its model and %.1f mm in life: %s' % (
+                name, was, now, 'its %.1f mm straight run made %.1f' % (gap[i], gap[i] + d) if run else 'stretched'), flush=True)
+    if out:
+        bpy.context.view_layer.update()
+    return out
+
+
 def ground(z=-0.0004, size=6, at=(0, 0)):
     """the pale grey table every shot stands on"""
     bpy.ops.mesh.primitive_plane_add(size=size, location=(at[0], at[1], z))

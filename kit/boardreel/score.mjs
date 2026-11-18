@@ -4,7 +4,8 @@
 
     node score.mjs FILM.mp4 FILM.marks.json OUT.mp4 [--lufs -16]
 
-   Every section cut lands on a hit with a riser into it, every shot cut inside a section on an impact, every part
+   Every section cut lands on a hit with a riser into it, every shot cut inside a section on an impact (soft, with a
+   felt fifth, once the film has resolved), every part
    seen landing on a hat, every case event (the board into the base, the lid shut) on a hit. The energy of each
    section comes from its name (open high, the request quiet, building through schematic and layout to the
    assembly, a resolve in D major for the case), or from reel.json's `energy` per section, passed in the marks.
@@ -65,7 +66,11 @@ export function notes(marks) {
       if (e < 0.4 || resolve) m({ at: t, inst: 'felt', note: (resolve ? ['D5', 'A5'] : ARP)[i % (resolve ? 2 : 8)], dur: 1.4, vel: resolve ? 0.22 : 0.3, pan: i % 2 ? 0.2 : -0.2 });
     }
     if (e >= 0.75 && !resolve) for (let i = 0; i * 0.25 < len - 0.05; i++) m({ at: s.t0 + i * 0.25, inst: 'pluck', note: HOOK[i % 8], dur: 0.22, vel: 0.36 + 0.1 * e, pan: Math.sin(i * 0.9) * 0.35 });
-    for (const t of s.cuts) { m({ at: t, inst: 'impact', note: 'D2', vel: 0.5 }); m({ at: t, inst: 'snare', note: 'C4', vel: 0.45 }); }
+    // a cut inside a section: an impact and a snare; in a resolved section (real footage, the case) a soft thump and a felt fifth
+    for (const t of s.cuts) {
+      m({ at: t, inst: 'impact', note: 'D2', vel: resolve ? 0.32 : 0.5 });
+      if (resolve) for (const k of ['D4', 'A4']) m({ at: t, inst: 'felt', note: k, dur: 1.6, vel: 0.3 }); else m({ at: t, inst: 'snare', note: 'C4', vel: 0.45 });
+    }
   });
   // every part seen landing ticks (thinned to one a 70 ms, so a pour reads as a roll, not a buzz)
   let lastLand = -1;

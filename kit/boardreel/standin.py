@@ -9,6 +9,9 @@ footprint's name (IND-SMD_L8.0-W8.0_...), else the F.Fab outline, else the court
 is the footprint's `above` in the heights file (by footprint name after 'lib:', the enclosure tool's format; a
 plain number also works), else -H in the name, else 1 mm. Board-only footprints (mounting holes, logos) and ones
 without a soldered pad get none. Prints the references it stood in for.
+
+Also writes OUTDIR/part_heights.json, {reference: mm above the board} for every part the heights file names: the
+shots give a library model that is the wrong size its real height (shots/_shot.py, heights).
 """
 import argparse
 import json
@@ -116,13 +119,17 @@ def make(board, out, heights=None):
     text = open(board).read().replace('${KIPRJMOD}', os.path.dirname(os.path.abspath(board)))
     hs = json.load(open(heights)) if heights else {}
     os.makedirs(os.path.join(out, 'standin'), exist_ok=True)
-    parts, refs, last = [], [], 0
+    parts, refs, last, real = [], [], 0, {}
     for a, b in blocks(text):
         fp = sexpr(text[a:b + 1])
+        ref = _ref(fp)
+        hv = hs.get(fp[1].split(':')[-1])
+        hv = hv.get('above') if isinstance(hv, dict) else hv
+        if ref and isinstance(hv, (int, float)):
+            real[ref] = float(hv)
         if [m for m in kids(fp, 'model') if not hidden(m)]:
             continue
         bd = body(fp, hs)
-        ref = _ref(fp)
         if not bd or not ref:
             continue
         f = os.path.join(os.path.abspath(out), 'standin', re.sub(r'\W', '_', ref) + '.wrl')
@@ -132,6 +139,7 @@ def make(board, out, heights=None):
         refs.append(ref)
     parts.append(text[last:])
     open(os.path.join(out, 'standin.kicad_pcb'), 'w').write(''.join(parts))
+    json.dump(real, open(os.path.join(out, 'part_heights.json'), 'w'), indent=1, sort_keys=True)
     return refs
 
 

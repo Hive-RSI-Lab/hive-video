@@ -191,6 +191,8 @@ def refs_of(parts):
     return r or [o for o in parts if o.children and o.type == 'EMPTY' and o.parent]
 
 
+K.heights(refs_of(parts), hi.z, os.path.join(REAL, 'part_heights.json'))   # a model of the wrong size gets the part's real height
+
 if CASE:
     def rig(name, objs):
         e = bpy.data.objects.new(name, None)
