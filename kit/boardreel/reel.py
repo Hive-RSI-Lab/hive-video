@@ -41,7 +41,7 @@ import common as K  # noqa: E402
 import cut as CUT  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(HERE))          # the module
-SHOTS = {'paper': 'paper.py', 'pages': 'pages.py', 'board': 'board.py', 'match': 'match.py'}
+SHOTS = {'paper': 'paper.py', 'pages': 'pages.py', 'board': 'board.py', 'match': 'match.py', 'phone': 'phone.py'}
 PREP = ('real', 'case', 'pages', 'timeline')
 
 
@@ -112,6 +112,9 @@ def deps(cfg, args):
             f = os.path.abspath(os.path.expanduser(a.split('=', 1)[-1])) if '=' in a else ''
             if os.path.isfile(f):
                 out.append([os.path.getsize(f), int(os.path.getmtime(f))])
+            elif os.path.isdir(f):   # frames made outside prep (a drawn sheet, a screen capture): their count, size and newest time
+                st = [os.stat(os.path.join(f, n)) for n in sorted(os.listdir(f))]   # (a sheet redrawn larger for the final was not seen)
+                out.append([len(st), sum(x.st_size for x in st), int(max((x.st_mtime for x in st), default=0))])
     return out
 
 
@@ -173,27 +176,62 @@ def prep(cfg):
         drawing(cfg, name, d)
 
 
+def plots(cfg, root):
+    """KiCad's own plot of a schematic, every sheet under the root a page: (full.pdf, bare.pdf without the drawing
+    sheet's frame and title block, spec). Made once per root, and again when a schematic file beside it changes."""
+    files = sorted(glob.glob(os.path.join(os.path.dirname(root), '*.kicad_sch')))
+    spec = [os.path.basename(root)] + [[os.path.basename(f), os.path.getsize(f), int(os.path.getmtime(f))] for f in files]
+    out = os.path.join(K.build_dir(cfg), 'plots', '%s-%s' % (os.path.splitext(os.path.basename(root))[0],
+                                                          hashlib.sha1(os.path.abspath(root).encode()).hexdigest()[:6]))
+    full, bare = os.path.join(out, 'full.pdf'), os.path.join(out, 'bare.pdf')
+    if not fresh(out, spec):
+        cli = tool('kicad-cli')
+        run([cli, 'sch', 'export', 'pdf', '--black-and-white', '-o', full, root])
+        run([cli, 'sch', 'export', 'pdf', '--black-and-white', '--exclude-drawing-sheet', '-o', bare, root])
+        done(out)
+    return full, bare, spec
+
+
+TOOLS = {'prompt': ['prompt.py'], 'schematic': ['schematic.py', '../blender/schem.py'],
+         'sheets': ['sheets.py', 'schematic.py', '../blender/schem.py'], 'layout': ['layout.py'], 'trace': ['layout.py']}
+
+
 def drawing(cfg, name, d):
     out = os.path.join(K.build_dir(cfg), 'drawings', name)
-    tool_py = d['tool'].split()[0] + '.py' if d['tool'] in ('prompt', 'schematic') else 'layout.py'
-    if fresh(out, [d, code(tool_py, 'common.py')]):
+    t = d['tool']
+    if t not in TOOLS:
+        raise SystemExit('reel: drawing %s: unknown tool %r' % (name, t))
+    src = lambda k, o=d: K.src(cfg, o[k]) if o.get(k) else None   # noqa: E731
+    main_sheet = lambda: K.src(cfg, cfg['sheet'])   # noqa: E731
+    plot = []                                      # the plots a schematic drawing is made from: (full, bare, spec) each
+    if t == 'schematic' and d.get('plot'):         # KiCad's plot is the ink, this tool's strokes say when it appears
+        plot = [plots(cfg, src('root') or src('sheet') or main_sheet())]
+    elif t == 'sheets':
+        plot = [plots(cfg, src('root', s) or src('sheet', s) or main_sheet()) for s in d['sheets']]
+    if fresh(out, [d, code(*TOOLS[t], 'common.py')] + ([[p[2] for p in plot]] if plot else [])):
         return
-    t, py = d['tool'], [sys.executable, os.path.join(HERE, d['tool'].split()[0] + '.py')]
+    py = [sys.executable, os.path.join(HERE, TOOLS[t][0])]
     opt = lambda k, flag=None: ['--' + (flag or k), str(d[k])] if k in d else []   # noqa: E731
     if t == 'prompt':
-        run(py + [K.film(cfg, cfg['prompt']), out, *opt('frames'), *opt('hold'), *opt('label'),
+        run(py + [K.film(cfg, cfg['prompt']), out, *opt('frames'), *opt('hold'), *opt('label'), *opt('scale'),
                   *sum((['--phrase', p] for p in d.get('phrases', [])), [])])
     elif t == 'schematic':
         crop = d.get('crop')
-        run(py + [K.src(cfg, d.get('sheet', cfg['sheet'])), out, *opt('frames'), *opt('width'), *opt('t'), *opt('pow'),
-                  *opt('order'), *opt('bold'), *(['--crop', ','.join(map(str, crop))] if crop else [])])
-    elif t in ('layout', 'trace'):
-        tl = os.path.join(K.build_dir(cfg), 'timeline', 'timeline.json')
-        run(py[:1] + [os.path.join(HERE, 'layout.py'), 'replay' if t == 'layout' else 'trace', K.src(cfg, cfg['board']), tl, out,
-                      *opt('frames'), *opt('width'), *opt('from'), *opt('to'), *opt('hold'), *opt('event'),
-                      *(['--rev'] if d.get('rev') else [])])
+        run(py + [src('sheet') or main_sheet(), out, *opt('frames'), *opt('width'), *opt('t'), *opt('pow'),
+                  *opt('order'), *opt('bold'), *opt('page'), *(['--crop', ','.join(map(str, crop))] if crop else []),
+                  *(['--plot', plot[0][0], '--bare', plot[0][1]] if plot else [])])
+    elif t == 'sheets':                             # many sheets on the table, each from its own root's plot
+        spec = dict(scale=d.get('scale', 0.5), sheets=[
+            dict(s, sheet=src('sheet', s) or main_sheet(), plot=p[0], bare=p[1]) for s, p in zip(d['sheets'], plot)])
+        spec.update((k, d[k]) for k in ('px', 'one', 'paper', 'cols', 'gap', 'margin', 'pad') if k in d)
+        json.dump(spec, open(os.path.join(out, 'sheets.json'), 'w'), indent=1)
+        run(py + [os.path.join(out, 'sheets.json'), out, *opt('frames'), *opt('bold'), *opt('fade'), *opt('jobs')])
     else:
-        raise SystemExit('reel: drawing %s: unknown tool %r' % (name, t))
+        tl = os.path.join(K.build_dir(cfg), 'timeline', 'timeline.json')
+        run(py + ['replay' if t == 'layout' else 'trace', K.src(cfg, cfg['board']), tl, out,
+                  *opt('frames'), *opt('width'), *opt('from'), *opt('to'), *opt('hold'), *opt('event'),
+                  *opt('ink'), *opt('place'), *opt('pour'), *opt('pen'), *opt('lead'), *opt('net'), *opt('crop'),
+                  *opt('stack'), *(['--rev'] if d.get('rev') else [])])
     done(out)
 
 
@@ -231,7 +269,7 @@ def render(cfg, quality, only=None):
         a, b = line.get('use', [1, nf + orb])
         if [a, b] != [1, nf + orb]:
             args.append('span=%d,%d' % (a, b))
-        if fresh(out, [line.get('shot'), nf, args, code('shots/' + SHOTS[line['shot']], 'shots/_shot.py'), deps(cfg, args)]):
+        if fresh(out, [line.get('shot'), nf, args, code('shots/' + SHOTS[line['shot']], 'shots/_shot.py', 'common.py'), deps(cfg, args)]):
             continue
         def missing():
             return [f for f in range(a, b + 1) if not os.path.exists(os.path.join(out, '%04d.png' % f))]
@@ -270,13 +308,28 @@ def paths(cfg, quality):
                 stamp=os.path.join(b, 'film.score.json'))
 
 
+def extras(cfg, marks):
+    """what reel.json adds to the cut's marks for the score: `energy`, `major` and the end card's voice line (`at`
+    seconds into the card). checks.py compares the marks with this, so a change in reel.json is seen before a re-cut."""
+    more = {k: cfg[k] for k in ('energy', 'major') if cfg.get(k)}
+    line = cfg.get('end', {}).get('voice')
+    if line:   # a recorded line said over the end card, `at` seconds into it: the score mixes it in
+        card = next(s for s in marks['shots'] if s['name'] == 'end')
+        more['voice'] = dict(file=K.film(cfg, line['file']), at=round(card['start'] + float(line.get('at', 0.4)), 4))
+    return more
+
+
 def cut_and_score(cfg, quality):
     p = paths(cfg, quality)
     _, marks = CUT.cut(cfg, quality, p['silent'], p['sheet'])
-    if cfg.get('energy'):
-        marks['energy'] = cfg['energy']
+    more = extras(cfg, marks)
+    if more:
+        marks.update(more)
         json.dump(marks, open(p['marks'], 'w'), indent=1)
-    subprocess.run(['node', os.path.join(HERE, 'score.mjs'), p['silent'], p['marks'], p['film']], check=True)
+    lufs = ['--lufs', str(cfg['lufs'])] if cfg.get('lufs') is not None else []
+    # "score": one piece of music through the film (steady, piano, laidback, cinematic) in place of a hit on every cut
+    track = ['--track', str(cfg['score'])] if cfg.get('score') else []
+    subprocess.run(['node', os.path.join(HERE, 'score.mjs'), p['silent'], p['marks'], p['film'], *lufs, *track], check=True)
     dst = cfg.get('film')
     if dst:
         dst = K.film(cfg, dst.replace('{quality}', quality))

@@ -31,6 +31,8 @@ CARD_PAPER, CARD_INK, CARD_INK2 = (238, 237, 232), (21, 23, 26), (75, 78, 83)
 
 SIZES = {'preview': (1280, 720), 'final': (2560, 1440)}
 FPS = 30
+SHEET_W = 0.594               # metres across the sheet a paper shot lays a drawing on
+SENSOR_W = 36.0               # mm across the shots' camera sensor (Blender's own default)
 
 FONTS = {
     'display': ['/usr/share/fonts/opentype/inter/InterDisplay-SemiBold.otf', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'],
@@ -39,6 +41,25 @@ FONTS = {
     'mono': ['/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf', '/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf'],
     'label': ['/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf'],
 }
+
+
+def match_size(clip, quality, studio):
+    """the size a match shot is rendered at, for a filmed clip of size `clip`. On the filmed table the render sits in
+    the clip on every frame and is never larger than it. In a studio it is alone in the picture first, so it has the
+    film's size and the clip is enlarged to it: a render made at a smaller clip's size and enlarged afterwards is soft
+    for as long as it is alone"""
+    w = SIZES[quality][0] if studio else min(clip[0], SIZES[quality][0])
+    return w, int(round(w * clip[1] / clip[0]))
+
+
+def match_soft(F, first, studio, lead=12):
+    """how much of the clip's softness a match shot's render takes on at shot frame F, 0 to 1; `first` is the first
+    frame the clip shows on. On the filmed table all of it on every frame: the two are one picture throughout. In a
+    studio none until `lead` frames before the clip shows, all of it from that frame on"""
+    if not studio:
+        return 1.0
+    u = min(1.0, max(0.0, 1.0 - (first - F) / float(lead)))
+    return u * u * (3 - 2 * u)
 
 
 def font(kind, size):
@@ -68,14 +89,26 @@ def smooth(u):
     return u * u * (3 - 2 * u)
 
 
-def ease(u, kind='steady'):
-    """in: gathers speed; out: brakes to rest; steady: mostly linear, so a cut lands on a camera already moving"""
+def ease(u, kind=None):
+    """in: gathers speed; out: brakes to rest; fast: at twice its mean speed on the first frame and at half of it on
+    the last; even: no easing at all (see `move`); default mostly steady, so a cut lands on a camera already moving"""
     u = min(1.0, max(0.0, u))
-    if kind == 'in':
-        return u ** 2.2
-    if kind == 'out':
-        return 1 - (1 - u) ** 3
-    return 0.6 * u + 0.4 * smooth(u)
+    v = u * u * (3 - 2 * u)
+    return {'in': u ** 2.2, 'out': 1 - (1 - u) ** 3, 'fast': 0.5 * u + 0.5 * (1 - (1 - u) ** 3), 'even': u}.get(kind, 0.6 * u + 0.4 * v)
+
+
+def move(c0, c1, u, kind=None):
+    """the camera pose (tx, ty, dist, azimuth, elevation) the part u of the way from c0 to c1. ease=even keeps the
+    picture moving at one speed from the first frame to the last, so a cut on either side lands on full movement:
+    the angles turn steadily, the distance changes by the same factor every frame (a pull-back at a steady rate in
+    metres crawls on screen by its end: the sheet is smaller there) and the target slides in step with the distance.
+    Shared by the shots (shots/_shot.py hands it on) and checks.py, so the check sees the camera the render has."""
+    e = ease(u, kind)
+    if kind != 'even':
+        return [a + (b - a) * e for a, b in zip(c0, c1)]
+    r = c1[2] / c0[2]
+    g = (r ** e - 1) / (r - 1) if abs(r - 1) > 1e-6 else e
+    return [a + (b - a) * (g if i < 3 else e) for i, (a, b) in enumerate(zip(c0, c1))]
 
 
 def load(path):

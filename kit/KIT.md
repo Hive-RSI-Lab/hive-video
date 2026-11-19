@@ -138,7 +138,10 @@ KiCad files, `enclosure` a folder of case STEP/STL parts, `research` datasheet P
 the request as written. `drawings` are frame sequences made from the design: `prompt` (the request typed, its
 `phrases` marked), `schematic` (a `crop` of the sheet in mils, drawn in an `order`: `in:FX,FY`, `out:FX,FY` or
 `sweep:FX0,FY0:FX1,FY1`), `layout` (the routing replayed from git history plus `also` save folders) and `trace` (the
-longest new trace followed). `shots` are the film in order: `paper` (a drawing on a desk, `seq=@NAME seq0= seqn=
+longest new trace followed). A drawing is 4000 pixels across unless it says more: `"scale": 3.5` on the prompt (the
+same sheet, 14000 across), `"width": 8000` on a schematic (with `"bold"` doubled too: it is in the drawing's own
+pixels), a layout or a trace. Give a drawing the pixels its closest shot needs, once, for the preview and the final
+alike: the check `sharp` names the number. `shots` are the film in order: `paper` (a drawing on a desk, `seq=@NAME seq0= seqn=
 ramp=`), `pages` (`pages=@pages`: each datasheet page whole on its sheet, the front pages dealt first, every title left
 uncovered), `board` (`fall real=@real` for the parts drop, `real=@real case=@case` for the case), `match` (below),
 each with `frames`, `section`, and optionally `use` [first, last] (only those frames are rendered),
@@ -165,11 +168,60 @@ and one for a closed case. The render then has the clip's lens and light, goes t
 `sweep=A,B` sends a line of the clip's own sunlight across the picture, the render ahead of it and the filmed frame
 behind it, so the cut out of the shot is the take itself. `studio=1` stands the render on a dark floor that fades to
 black, not on the filmed table: parts fall in a void and the line turns it into the room (it reads as a render becoming
-real, not as a drawing laid over a photograph). `fall` drops the parts, `case=@case upright=1` stands the printed case
+real, not as a drawing laid over a photograph). A studio render is alone in the picture until the clip shows, so it
+is made at the film's size even when the clip is smaller (a 1080p take in a 1440p film: the filmed frames are enlarged
+to it, the render is not rendered small and enlarged), and it takes the clip's softness on only over the 12 frames
+before the line starts. On the filmed table the render is never larger than the clip. `fall` drops the parts, `case=@case upright=1` stands the printed case
 round the board and shuts it, `look=@film/FILE.json` names the finishes CAD colours cannot give, `probe=1` prints the
 render's light beside the clip's for tuning them. A shot line's own `spp` ({"final": 192}) replaces the film's for
 that shot. In args `@film` is the folder reel.json is in and `@NAME` any folder the film keeps in its build (`@match`,
 `@graded`); a file an arg names is part of the shot's stamp by its size and time, so a new solve renders the shot again.
+A folder of frames the film made itself (no `.spec` in it: a drawn sheet, a screen capture) is in the stamp by its
+count of files, their total size and the newest one's time, so a sheet drawn again larger for the final renders its
+shot again and is not skipped as done.
+A match file names its filmed frames and its clean table by full path: keep what the solve made in the film's folder,
+not in scratch (a scratch folder nothing has touched for a day is swept, and the shot then dies on a missing file just
+before a final), and write beside it how to put the scratch frames back.
+
+**Pace.** A reel is watched once and paused when someone wants to look: a shot is over when its point is made, 1 to
+1.5 s for a drawing, 2 s for a drop. The settings that cut the waiting out of a shot, not the content:
+- `ease=fast` on a paper or phone shot: the camera is at twice its mean speed on the first frame and at half of it on
+  the last, so the shot opens inside the move and the cut out still lands on a moving camera. The default (mostly
+  steady) and `in`/`out` start or end at rest, which reads as a pause on either side of every cut.
+- `ease=even` on a paper, pages or phone shot: the picture moves at one speed from the first frame to the last, so
+  neither side of a cut slows down. The angles turn steadily, the distance changes by the same factor every frame
+  and the target slides in step with it (`_shot.move`): a pull-back at a steady rate in metres crawls on screen by
+  its end, because the sheet is smaller there. `fast` still ends at half speed, and several `fast` shots in a row
+  read as a slowdown before every cut; use `even` for a run of short shots and keep the eased kinds for a shot that
+  stands alone. With `track=` the camera runs along the tracked path at one speed to the shot's last frame
+  (`paper.follow`), and does not wait where the drawing pauses. `pages` picks its pull-back for `even` by itself.
+  Measure it, do not judge it by eye: the mean frame-to-frame change over a shot's last quarter should not be far
+  below its first quarter's.
+- `of=N at=K` on two paper shots in a row with the same `cam=` and `ease=`: one camera move N frames long carried
+  across the cut (the second shot has `at=` the first one's length). With `from=PNG fade=8` on the second (a `still=`
+  shot) the sheet shows the first shot's last drawing on its first frame and turns into the still over 8 frames.
+- match shots: frame F of the shot is frame `k0` + F of the clip, so a larger `k0` and fewer `frames` leave less of the
+  filmed take after the reveal; `land=A,B` are the frames the first and the last part land on, `slow=` how many times
+  slower than life they fall, `drop=A,B` (the case) the millimetres the board and the lid are let go from, so a short
+  shot opens on a board that is already falling. `sweep=A,B` goes right after the last landing. `crisp=1` leaves the
+  render as sharp as it was rendered, for one that meets the clip only in the line of light.
+- a drawing takes its `--frames` from the shots that show it, so a shorter shot draws faster and still ends complete;
+  `"end": {"frames": 60}` sets the end card's length.
+- a line said over the end card: `"end": {"voice": {"file": "voice/line.wav", "at": 0.4}}` (a recording in the film's
+  folder, and the seconds into the card it starts on). The score puts it in the middle with a little of the room on
+  it and the music 7 dB lower while it is said, and refuses a take that is not over 0.15 s before the film ends: start
+  it sooner or give the card more `frames`. Make the take with a model on the machine, and say in the film's folder
+  how it was made.
+- the music: `"score": "steady"` (or `"piano"`, `"laidback"`, `"cinematic"`) picks a track from
+  `boardreel/tracks.mjs` that runs through the whole film on one grid, every section cut on a bar line, so it never
+  restarts at a cut. Without the key the film gets the cut-by-cut score (`score.mjs`), which restarts at every
+  section and sounds like blocks on a film of many short cuts. `"major": ["sound"]` names the section where the thing
+  is seen working: the music arrives there, after an intro with no beat (none: the music is there from the first
+  frame). `"energy": {"open": 0.3, "layout": 1, "end": 0.25}` sets a section's energy (0 to 1; the rest keep
+  `ENERGY` in `score.mjs`): a film that opens quietly and builds once says so here. To hear the same picture with
+  another track, change `"score"` and run `reel.py cut`: it re-cuts from the rendered shots and re-scores, no render.
+  `node boardreel/selfcheck_tracks.mjs LINE.wav TRACK` measures one track on a test film.
+The check `drawing` still holds every frame to new ink, and `length` to the film's range.
 
 **Real footage.** A slot's `dir` may be `@NAME/...` in the build too (footage the film graded and steadied itself). Each
 picture and clip in a slot is a shot of its own in the marks, so the score lands on each cut (softly, with a felt
@@ -184,16 +236,23 @@ GPU runs take turns on the card through `flock ~/.cache/hive-video/gpu.lock`, th
 
 **The rules are checks, not advice.** `reel.py check` fails the film when any of these break:
 - every schematic cut adds ink on every frame it shows, first to last (`drawing`);
+- every paper shot's drawing has the pixels for the 1440p final where the camera comes closest: one drawing pixel
+  covers at most 1.25 of the picture's at the point the camera looks at (`sharp`). It judges the final in a preview
+  build too, so a soft drawing is found before the long render, and it names the `scale` or `width` that fixes it;
 - every footprint has at most one visible 3D model (`models`); a soldered part with none gets a stand-in block in
   `prep` (`standin.py`: a dark moulded body, its size from the footprint name or its F.Fab outline, its height from
   `heights`), so every part falls onto the board; the check lists them so the design can get real models;
 - in every drop the parts land faster and faster (`drops`);
 - `video stutters` finds no frozen frame or flash (`smooth`); the film's own cuts are skipped, and sharp moments (a part falling past the lens, a lid shutting) are listed with their times to look at, not failed;
-- the score was made from this cut's marks: `reel.py cut` always re-scores (`score`);
+- the score was made from this cut's marks, as the track `"score"` names (none: the cut-by-cut score);
+  `reel.py cut` always re-scores (`score`);
 - the length is inside `length` (`length`);
 - nothing on screen names a model, gives a count, claims the hardware works, or is hype (`words`).
 
-Defaults that keep the rest: light ink on paper with one pastel per copper layer, the score built from the cut's marks
-(a hit on every section cut, a tick on every landing), and an end card that reads the title, the build status from
+Defaults that keep the rest: light ink on paper with one pastel per copper layer, the cut-by-cut score built from the
+cut's marks (a hit on every section cut, a tick on every landing; pick a `"score"` track for a film of short cuts), and an end card that reads the title, the build status from
 the slots (not yet built / built / on the bench, never "works") and "Made by the Hive  hivelab.ca". A `credit` is
 config only. `python3 kit/boardreel/selfcheck.py` runs the kit's cases on the tiny board in `kit/boardreel/fixture/`.
+It also reads every shot script without Blender: each `K.name` a script uses must be defined in or imported by
+`shots/_shot.py` (a helper moved to `common.py` and not imported back stopped a final on its first frame). Run it
+after any edit to the shot scripts and before a long render.

@@ -1,7 +1,7 @@
 """Research shot: the first pages of the real datasheets the design read, dealt onto the table as sheets of
 paper (a rigid-body drop with air drag, baked to keyframes). The front pages land first, in the middle; the dealing
-speeds up to a pour and the camera pulls back with it, still moving at the end, so the cut out of it lands on
-movement.
+speeds up to a pour and the camera pulls back with it, the picture moving as fast on the last frame as on the
+first, so the cut out of it lands on full movement.
 
     blender -b -P pages.py -- OUTDIR FRAMES pages=DIR [quality=preview|final] [stills=..]
 
@@ -221,14 +221,32 @@ def at(u):
     return tg + O0.lerp(O1, u), tg
 
 
-def view(f, share):
-    """camera position and target at frame f; `share` of the pull-back is at constant speed, the rest gathers speed"""
+R = O1.length / O0.length
+
+
+def part(f, share):
+    """the part of the pull-back done at frame f. It is even on screen: the distance grows by the same factor every
+    frame, so the picture moves as fast on the last frame as on the first (at a steady rate in metres it would crawl
+    by the end, the spread being small in the frame by then). `share` of it is done at a steady rate in metres all
+    the same, which is earlier: that much more of the table is in the picture when a sheet lands."""
     u = (f - 1) / max(1, NF - 1)
-    return at(share * u + (1 - share) * u ** 2.2)
+    g = (R ** u - 1) / (R - 1) if abs(R - 1) > 1e-6 else u
+    return share * u + (1 - share) * g
+
+
+def view(f, share):
+    """camera position and target at frame f"""
+    return at(part(f, share))
 
 
 def inside(c, rim):
     return rim <= c.x <= 1 - rim and rim <= c.y <= 1 - rim
+
+
+def rim(f, f0):
+    """how far inside the picture a sheet's middle has to be at frame f: in it at all while the sheet is still
+    arriving (it comes in over the far edge), clear of the edge from three frames after it is let go"""
+    return 0.03 if f >= f0 + 3 else 0.0
 
 
 def misses(share):
@@ -238,7 +256,7 @@ def misses(share):
         loc, tg = view(f, share)
         for i, (o, f0) in enumerate(zip(sheets, F0)):
             c = seen(loc, tg, rec[o.name][f - 1].translation)
-            if f >= f0 and not inside(c, 0.03):
+            if f >= f0 and not inside(c, rim(f, f0)):
                 return 'sheet %d, let go at frame %d, is at %.2f, %.2f of the frame at frame %d' % (i + 1, f0, c.x, c.y, f)
         if f >= F0[-1] + 8:
             for c in (seen(loc, tg, p) for p in edge):
@@ -252,17 +270,17 @@ def need(i):
     worst = 0.0
     for f in range(F0[i], min(NF, F0[i] + 25) + 1):
         p = rec[sheets[i].name][f - 1].translation
-        if inside(seen(*at(0.0), p), 0.03):
+        if inside(seen(*at(0.0), p), rim(f, F0[i])):
             continue
         lo, hi = 0.0, 1.0
         for _ in range(30):
             m = (lo + hi) / 2
-            lo, hi = (lo, m) if inside(seen(*at(m), p), 0.03) else (m, hi)
+            lo, hi = (lo, m) if inside(seen(*at(m), p), rim(f, F0[i])) else (m, hi)
         worst = max(worst, hi)
     return worst
 
 
-SHARE = float(kv['share']) if 'share' in kv else next((s / 20 for s in range(9, 21) if not misses(s / 20)), 1.0)
+SHARE = float(kv['share']) if 'share' in kv else next((s / 20 for s in range(0, 21) if not misses(s / 20)), 1.0)
 
 
 def pose(scene, *_):
@@ -275,14 +293,14 @@ print('pages: %d sheets, dealt %s' % (len(sheets), ' '.join(os.path.splitext(os.
 print('pages: let go at frames %s, at up to %.2f m/s; slid %.0f mm on average, %.0f mm at most'
       % (' '.join(str(f) for f in F0), speed, 1000 * sum(slide) / len(slide), 1000 * max(slide)))
 MISS = misses(SHARE)
-print('pages: camera %.2f m from the first sheet to %.2f m from the spread, %.0f%% of the pull-back at constant speed%s'
-      % (O0.length, O1.length, 100 * SHARE, '; ' + MISS if MISS else ''))
+print('pages: camera %.2f m from the first sheet to %.2f m from the spread, the pull-back %.0f%% even on screen%s'
+      % (O0.length, O1.length, 100 * (1 - SHARE), '; ' + MISS if MISS else ''))
 if kv.get('tell'):
     for i, o in enumerate(sheets):
         c0, c1 = seen(*view(F0[i], SHARE), rec[o.name][F0[i] - 1].translation), seen(*at(1.0), rec[o.name][-1].translation)
         print('pages: sheet %2d %-22s let go at %3d at %.2f, %.2f of the frame, rests at %.2f, %.2f of the last; pull-back '
               'needed %.2f, done %.2f' % (i + 1, os.path.splitext(os.path.basename(pages[i]))[0][:22], F0[i], c0.x, c0.y,
-                                           c1.x, c1.y, need(i), (F0[i] - 1) / max(1, NF - 1)))
+                                           c1.x, c1.y, need(i), part(F0[i], SHARE)))
     sys.exit(0)
 bpy.app.handlers.frame_change_pre.append(pose)
 pose(S)

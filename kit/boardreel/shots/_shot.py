@@ -10,6 +10,10 @@ import sys
 import bpy
 from mathutils import Vector
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import ease, move, match_size, match_soft  # noqa: E402,F401  plain maths the shots share with checks.py and
+#                                                         selfcheck.py, which cannot run Blender: a shot reads them as K.name
+
 SIZES = {'preview': (1280, 720), 'final': (2560, 1440)}
 SAMPLES = {'preview': 40, 'final': 64}
 
@@ -170,13 +174,6 @@ def sph(az, el, dist):
 def aim(cam, tgt):
     cam.rotation_euler = (Vector(tgt) - cam.location).to_track_quat('-Z', 'Y').to_euler()
     cam.data.dof.focus_distance = (Vector(tgt) - cam.location).length
-
-
-def ease(u, kind=None):
-    """in: gathers speed; out: brakes to rest; default mostly steady, so a cut lands on a camera already moving"""
-    u = min(1.0, max(0.0, u))
-    v = u * u * (3 - 2 * u)
-    return {'in': u ** 2.2, 'out': 1 - (1 - u) ** 3}.get(kind, 0.6 * u + 0.4 * v)
 
 
 def render(out, kv):

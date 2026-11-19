@@ -51,6 +51,25 @@ def drawing_cases(tmp):
     res = {n: ok for n, ok, _ in checks.drawing(c)}
     check('R2 the drawing check passes a shot that draws every frame and fails one that repeats or runs out of ink',
           res == {'good': True, 'slow': False, 'held': False}, res)
+    c = cfg_in(tmp, drawings={'S': {'tool': 'schematic'}}, shots=[
+        dict(name='far', shot='paper', frames=12, args='seq=@S cam=0,0,0.20,0,50:0,0,0.12,0,50 lens=50'),
+        dict(name='near', shot='paper', frames=12, args='seq=@S cam=0,0,0.20,0,50:0,0,0.03,0,50 lens=50'),
+        dict(name='part', shot='paper', frames=6, args='seq=@S cam=0,0,0.20,0,50:0,0,0.03,0,50 lens=50 of=12 at=0 ease=even'),
+        dict(name='tiles', shot='paper', frames=12, args='tiles=@S cam=0,0,0.01,0,50:0,0,0.01,0,50')])
+    res = {n: (ok, d) for n, ok, d in checks.sharp(c)}
+    # a 400 px drawing on the 0.594 m sheet, 50 mm lens: at 0.12 m the final's 2560 px see 0.0864 m of it, 58 px
+    check('R2c sharp: a drawing the final would show soft fails with the width that fixes it; the same move cut '
+          'short of the close end passes; tiles are not judged',
+          sorted(res) == ['far', 'near', 'part'] and not res['far'][0] and '"width": 18000' in res['far'][1]
+          and not res['near'][0] and '176.00 final px' in res['near'][1] and abs(K.move([0, 0, 0.20, 0, 50], [0, 0, 0.03, 0, 50], 5 / 11, 'even')[2]
+                                                                                 - 0.20 * (0.03 / 0.20) ** (5 / 11)) < 1e-9, res)
+    wide = os.path.join(tmp, 'build', 'drawings', 'W')
+    os.makedirs(wide)
+    from PIL import Image
+    Image.new('L', (20000, 8), 255).save(os.path.join(wide, '00000.png'))
+    c = cfg_in(tmp, drawings={'W': {'tool': 'schematic'}}, shots=[dict(name='ok', shot='paper', frames=12, args='seq=@W cam=0,0,0.20,0,50:0,0,0.12,0,50')])
+    res = checks.sharp(c)
+    check('R2d sharp: with the pixels the closest frame needs the shot passes', len(res) == 1 and res[0][1] and res[0][2].startswith('0.88 final px'), res)
     check('R2b the check and the render share one frame map (seq_frame): ramp ends on the last drawing frame',
           K.seq_frame(1, 30, 0, 50, ramp=1.5) == 0 and K.seq_frame(30, 30, 0, 50, ramp=1.5) == 49 and K.seq_frame(5, 30, 10) == 14,
           [K.seq_frame(f, 30, 0, 50, ramp=1.5) for f in (1, 30)])
@@ -131,8 +150,10 @@ def rule_cases(tmp):
     check('R6 falling parts must speed up drop by drop: a pour passes, a slowing drip fails', res == {'pour': True, 'drip': False}, res)
     bad = [
         cfg_in(tmp, title='Designed by Claude'), cfg_in(tmp, title='A board', credit='214 parts placed'),
-        cfg_in(tmp, title='A board', status='Tested and working'), cfg_in(tmp, title='An incredible board')]
-    good = cfg_in(tmp, title='A hi-fi receiver', credit='A. Person')
+        cfg_in(tmp, title='A board', status='Tested and working'), cfg_in(tmp, title='An incredible board'),
+        cfg_in(tmp, title='A board', end=dict(by='Proven by 12 agents'))]
+    good = cfg_in(tmp, title='A hi-fi receiver', credit='A. Person',
+                  end=dict(title='A receiver', by='Designed and developed by the Hive', links=['hivelab.ca'], status=False))
     check('R7 on-screen words: no model named, no count, no claim it works, no hype; a plain title passes',
           all(checks.words(c) for c in bad) and not checks.words(good), [checks.words(c) for c in bad + [good]])
     c = cfg_in(tmp, shots=[dict(slot='real photos', dir='photos'), dict(slot='real testing', dir='testing')])
@@ -165,20 +186,113 @@ def score_cases(tmp):
         return
     marks = dict(fps=30, seconds=12.0, lands=[6.1, 6.12, 6.3], hits=[10.0],
                  shots=[dict(name='a', section='open', start=0, frames=90), dict(name='b', section='layout', start=3, frames=60),
-                        dict(name='c', section='layout', start=5, frames=60), dict(name='d', section='case', start=7, frames=150)])
+                        dict(name='c', section='layout', start=5, frames=24), dict(name='c2', section='layout', start=5.8, frames=36),
+                        dict(name='d', section='case', start=7, frames=150)])
     mp = os.path.join(tmp, 'm.json')
     json.dump(marks, open(mp, 'w'))
     js = ("import {notes, sections} from %s; const m = JSON.parse(require_('%s'));"
           "const n = notes(m).notes; const at = (i, t) => n.some((x) => x.inst === i && Math.abs(x.at - t) < 1e-6);"
           "console.log(JSON.stringify({secs: sections(m).map((s) => s.name), cut3: at('impact', 3) && at('riser', 3 - 1.5),"
-          "cut5: at('snare', 5), case7: at('impact', 7), hit10: at('crash', 10), lands: [6.1, 6.12, 6.3].filter((t) => at('hat', t)).length}))"
+          "cut5: at('snare', 5) && at('impact', 5), quick: at('impact', 5.8) && !at('snare', 5.8), snares: n.filter((x) => x.inst === 'snare').length,"
+          "case7: at('impact', 7), hit10: at('crash', 10), lands: [6.1, 6.12, 6.3].filter((t) => at('hat', t)).length}))"
           % (json.dumps('file://' + os.path.join(HERE, 'score.mjs')), mp)).replace(' MOD ', ' % ')
     js = "import { readFileSync as require_ } from 'node:fs';" + js
     r = subprocess.run([node, '--input-type=module', '-e', js], capture_output=True, text=True)
     got = json.loads(r.stdout) if r.returncode == 0 else r.stderr[-400:]
-    check('R10 the score comes from the marks: a hit and riser on each section cut, a snare on a cut inside one, a crash on each hit',
+    check('R10 the score comes from the marks: a hit and riser on each section cut, an impact and a snare on a cut inside one, a crash on each hit',
           isinstance(got, dict) and got['secs'] == ['open', 'layout', 'case'] and got['cut3'] and got['cut5'] and got['case7'] and got['hit10'], got)
+    check('R10c a cut that comes less than 1.5 s after a snare keeps its impact and gets no snare of its own',
+          isinstance(got, dict) and got['quick'] and got['snares'] == 1, got)
     check('R10b landings tick, thinned so two within 70 ms are one', isinstance(got, dict) and got['lands'] == 2, got)
+    # a spoken line: half a second of a 220 Hz tone stands in for the take
+    import math
+    import struct
+    import wave
+    wav = os.path.join(tmp, 'line.wav')
+    with wave.open(wav, 'wb') as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+        w.writeframes(b''.join(struct.pack('<h', int(12000 * math.sin(2 * math.pi * 220 * i / 24000))) for i in range(12000)))
+    js = ("import { readFileSync } from 'node:fs'; import { voice } from %s; import { RATE } from %s;"
+          "const m = JSON.parse(readFileSync('%s')); m.voice = { file: '%s', at: 10 };"
+          "const v = voice(m); const rms = (b, t0, t1) => { let s = 0; for (let i = Math.round(t0 * RATE); i < Math.round(t1 * RATE); i++) s += b.L[i] * b.L[i] + b.R[i] * b.R[i]; return Math.sqrt(s / (2 * (t1 - t0) * RATE)); };"
+          "let late = ''; try { voice({ ...m, voice: { file: m.voice.file, at: 11.6 } }); } catch (e) { late = e.message; }"
+          "let none = ''; try { voice({ ...m, voice: { file: m.voice.file + '.no', at: 10 } }); } catch (e) { none = e.message; }"
+          "console.log(JSON.stringify({ n: v.bus.L.length, before: rms(v.bus, 0, 10), said: rms(v.bus, 10, 10.5), middle: v.dry.L.every((x, i) => x === v.dry.R[i]), late, none }))"
+          % (json.dumps('file://' + os.path.join(HERE, 'score.mjs')), json.dumps('file://' + os.path.join(HERE, '..', 'motion', 'sound.mjs')), mp, wav))
+    r = subprocess.run([node, '--input-type=module', '-e', js], capture_output=True, text=True)
+    got = json.loads(r.stdout) if r.returncode == 0 else r.stderr[-400:]
+    check('R10d a line said over the end card: in the mix from its second and not before, the same on both sides',
+          isinstance(got, dict) and got['n'] == 12 * 48000 and got['before'] < 1e-9 and got['said'] > 0.02 and got['middle'], got)
+    check('R10e a line that would run into the end of the film, or a take that cannot be read, stops the score and says why',
+          isinstance(got, dict) and 'before the film ends' in got['late'] and 'cannot read the voice' in got['none'], got)
+    track_cases(tmp, node, mp)
+
+
+def track_cases(tmp, node, mp):
+    # the four tracks (tracks.mjs) on one uneven film, measured by selfcheck_tracks.mjs, one process each, side by side.
+    # Their line is a 1 kHz tone: 220 Hz is A, a note the tracks play, and the music under it would read as the line.
+    import checks
+    import math
+    import struct
+    import wave
+    wav = os.path.join(tmp, 'line1k.wav')
+    with wave.open(wav, 'wb') as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+        w.writeframes(b''.join(struct.pack('<h', int(12000 * math.sin(2 * math.pi * 1000 * i / 24000))) for i in range(12000)))
+    names = ['cuts', 'steady', 'piano', 'laidback', 'cinematic']
+    runs = {n: subprocess.Popen([node, os.path.join(HERE, 'selfcheck_tracks.mjs'), wav, n], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            for n in names}
+    got = {}
+    for n, r in runs.items():
+        out, err = r.communicate()
+        got[n] = json.loads(out) if r.returncode == 0 else err[-400:]
+    if not all(isinstance(g, dict) for g in got.values()):
+        check('R10f selfcheck_tracks.mjs measures every track', False, got)
+        return
+    T = {n: g for n, g in got.items() if n != 'cuts'}
+    see = lambda *k: {n: {x: g[x] for x in k} for n, g in T.items()}
+    check('R10f every track: the section cuts are bar lines, the eighths join end to end, no bar bent more than 6 %',
+          all(g['bars'] and g['joined'] and g['bend'] <= 0.06 for g in T.values()), see('bars', 'joined', 'bend'))
+    check('R10g every track: the pad starts before the first frame and never drops out',
+          all(g['lead'] < 0 and not g['holes'] for g in T.values()), see('lead', 'holes'))
+    check('R10h nothing marks a section cut that is not a big moment or a cut off the grid; steady marks the cut on the grid',
+          all(g['unmarked'] == 0 and g['off'] == 0 for g in T.values()) and T['steady']['on'] > 0, see('unmarked', 'off', 'on'))
+    check('R10i steady\'s kick is on every half bar from where the music arrives to the end card; piano and cinematic have none',
+          T['steady']['beat'] and T['steady']['kicks'] > 0 and T['piano']['kicks'] == 0 and T['cinematic']['kicks'] == 0
+          and all(g['kickEnd'] == 0 and g['intro'] == 0 for g in T.values()), see('kicks', 'beat', 'kickEnd', 'intro'))
+    check('R10i2 no two kicks an eighth apart where a section ends in a bar of 9 eighths (steady and laidback, at full energy)',
+          T['steady']['nine']['kicks'] > 0 and all(T[n]['nine']['tight'] == [] for n in ('steady', 'laidback')),
+          {n: T[n]['nine'] for n in ('steady', 'laidback')})
+    check('R10j without `major` the music arrives at once: no intro, notes in the first half second',
+          all(g['plain']['arrive'] == 0 and g['plain']['intro'] == 0 and g['plain']['early'] > 0 for g in T.values()), see('plain'))
+    check('R10k every track builds whole with and without the line; the line comes through as said; nothing sits 9 dB under the middle',
+          all(g['sound']['whole'] and abs(g['sound']['line'] - 1) <= 0.05 and g['sound']['bare'] > 0.02
+              and g['sound']['first'] >= -9 and g['sound']['low'] >= -9 for g in T.values()), see('sound'))
+    cut = got['cuts']['sound']['jumps']
+    check('R10l every track is one piece: at most 2 jumps of 4.5 dB a quarter second, fewer than the cut-by-cut score (%d)' % cut,
+          got['cuts']['sound']['whole'] and all(g['sound']['jumps'] <= 2 and g['sound']['jumps'] < cut for g in T.values()),
+          {n: g['sound']['jumps'] for n, g in got.items()})
+    out = os.path.join(tmp, 'nope.mp4')
+    r = subprocess.run([node, os.path.join(HERE, 'score.mjs'), os.path.join(tmp, 'none.mp4'), mp, out, '--track', 'nope'], capture_output=True, text=True)
+    check('R10m an unknown track stops the score, says so and writes nothing',
+          r.returncode == 2 and 'no track "nope"' in r.stderr and not os.path.exists(out) and not os.path.exists(os.path.join(tmp, 'nope.score.json')),
+          (r.returncode, r.stderr[-200:]))
+    sha = 'a' * 40
+    cases = [checks.scored({}, {'marks': sha}, sha), checks.scored({}, {'marks': sha, 'track': 'cuts'}, sha),
+             checks.scored({'score': 'piano'}, {'marks': sha, 'track': 'piano'}, sha), checks.scored({'score': 'piano'}, {'marks': sha}, sha),
+             checks.scored({'score': 'piano'}, {'marks': sha, 'track': 'steady'}, sha), checks.scored({}, {'marks': 'b' * 40}, sha),
+             checks.scored({}, {}, sha)]
+    check('R10n check: the score must come from this cut\'s marks and be the track reel.json names (none: cuts)',
+          [c[0] for c in cases] == [True, True, True, False, False, False, False] and 'steady' in cases[4][1] and 'another cut' in cases[5][1],
+          cases)
+    m = {'energy': {'a': 0.5}, 'major': ['a'], 'voice': {'file': 'v.wav', 'at': 3}}
+    st = {'marks': sha, 'voice': 'c' * 40}
+    more = [checks.scored({}, st, sha, m, dict(m), 'c' * 40), checks.scored({}, st, sha, m, {**m, 'energy': {'a': 0.6}}, 'c' * 40),
+            checks.scored({}, st, sha, m, {**m, 'major': []}, 'c' * 40), checks.scored({}, st, sha, m, dict(m), 'd' * 40),
+            checks.scored({}, {'marks': sha}, sha, m, dict(m), 'c' * 40)]
+    check('R10n2 check: the marks still say what reel.json says (energy, major, voice line) and the voice take is the one mixed',
+          [c[0] for c in more] == [True, False, False, False, False] and 'energy' in more[1][1] and 'major' in more[2][1]
+          and 'voice take' in more[3][1] and 'voice take' in more[4][1], more)
 
 
 def reel_cases(tmp):
@@ -202,6 +316,13 @@ def reel_cases(tmp):
     except SystemExit:
         refused = True
     check('R11c an @name that is neither a drawing nor a prep output is refused', refused)
+    sheet = os.path.join(tmp, 'build', 'sheet')   # frames made outside prep: no .spec of their own
+    os.makedirs(sheet, exist_ok=True)
+    open(os.path.join(sheet, '00000.png'), 'w').write('a')
+    d0 = reel.deps(cfg, ['seq=' + sheet, 'lens=50'])
+    open(os.path.join(sheet, '00000.png'), 'w').write('a larger drawing')
+    d1 = reel.deps(cfg, ['seq=' + sheet, 'lens=50'])
+    check('R11e a folder of frames made outside prep re-renders its shot when it is made again', d0 and d0 != d1, (d0, d1))
     fake = os.path.join(tmp, 'blender')   # writes every frame, orbit too, then dies as the time cap kills it
     open(fake, 'w').write('#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done; shift\n'
                           'n=$(($2 + $(echo "$@" | sed -n "s/.*orbit=\\([0-9]*\\).*/\\1/p")))\n'
@@ -265,10 +386,48 @@ def pages_cases(tmp):
           and abs((box[0] + box[2]) / 2 - 425) <= 2 and abs((box[1] + box[3]) / 2 - 550) <= 2, (im.size, box))
 
 
+def match_cases(tmp):
+    import common as K
+    got = [K.match_size(*a) for a in (((1920, 1080), 'final', True), ((1920, 1080), 'final', False), ((2560, 1440), 'final', False),
+                                      ((3840, 2160), 'final', False), ((1920, 1080), 'preview', True), ((1920, 1080), 'preview', False))]
+    check('R13 a studio match shot is rendered at the film\'s size, not at a smaller clip\'s and enlarged; on the filmed table never larger than the clip',
+          got == [(2560, 1440), (1920, 1080), (2560, 1440), (2560, 1440), (1280, 720), (1280, 720)], got)
+    soft = [K.match_soft(F, 28, True) for F in range(1, 61)]
+    check('R13b a studio render takes the clip\'s softness on only where it meets the clip: none 12 frames before, all of it from the clip\'s first frame on',
+          soft[0] == 0 and soft[15] == 0 and 0 < soft[21] < 1 and soft[27] == 1 and soft[59] == 1 and all(y >= x for x, y in zip(soft, soft[1:]))
+          and K.match_soft(1, 28, False) == 1, [round(v, 3) for v in soft[14:29]])
+
+
+def shot_cases(tmp):
+    """the shot scripts run inside Blender only, so nothing here can run them: read them instead"""
+    import ast
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'shots')
+    tree = ast.parse(open(os.path.join(here, '_shot.py')).read())
+    have = set()
+    for n in tree.body:
+        if isinstance(n, (ast.FunctionDef, ast.ClassDef)):
+            have.add(n.name)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            have.update((a.asname or a.name).split('.')[0] for a in n.names)
+        elif isinstance(n, ast.Assign):
+            have.update(t.id for t in n.targets if isinstance(t, ast.Name))
+    lost = []
+    for f in sorted(os.listdir(here)):
+        if not f.endswith('.py') or f == '_shot.py':
+            continue
+        t = ast.parse(open(os.path.join(here, f)).read())
+        if not any(isinstance(n, ast.Import) and any(a.name == '_shot' and a.asname == 'K' for a in n.names) for n in ast.walk(t)):
+            continue
+        lost += ['%s: K.%s' % (f, n.attr) for n in ast.walk(t)
+                 if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == 'K' and n.attr not in have]
+    check('R14 every K.name a shot script reads is in shots/_shot.py (a helper moved to common.py was not: the final stopped on its first shot)',
+          not lost, sorted(set(lost)))
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix='br-check-')
     try:
-        for case in (drawing_cases, layout_cases, model_cases, standin_cases, rule_cases, score_cases, reel_cases, pages_cases):
+        for case in (drawing_cases, layout_cases, model_cases, standin_cases, rule_cases, score_cases, reel_cases, pages_cases, match_cases, shot_cases):
             try:
                 case(tmp)
             except Exception as e:   # a case that crashes is a failure with its reason, not a stopped run

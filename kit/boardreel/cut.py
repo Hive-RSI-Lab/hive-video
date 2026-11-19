@@ -9,7 +9,8 @@ dissolve in over `xfade` frames. A `slot` line is a place for real footage: it t
 folder (beside reel.json, or `@name` in the build), in name order, and is left out cleanly while the folder is
 empty. A clip plays its first `max` seconds (default 6). The end card's status line follows the
 slots: no photos, "design files only / not yet built"; photos, "built"; testing footage, "on the bench". It never
-says the hardware works.
+says the hardware works. reel.json's `end` changes the card's words (see end_card) and `credit` puts a name in the
+lower right of every frame.
 
 Writes FILM.mp4 (silent), FILM.marks.json (where every shot starts, every part lands, every hit falls) and the
 contact sheet.
@@ -21,7 +22,7 @@ import os
 import subprocess
 import sys
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter, ImageStat
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as K  # noqa: E402
@@ -31,6 +32,9 @@ CLIPS = ('.mp4', '.mov', '.m4v', '.mkv', '.webm')
 END_FRAMES = 75
 # the film says what its colours are (BT.709 matrix and primaries, sRGB curve, video range): untagged, a player guesses
 TAGS = ['-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'iec61966-2-1', '-color_range', 'tv']
+# the credit's ink: the picture's levels under it at which it turns light and dark; frames to turn; a jump in that
+# level read as a cut; how dark the shade behind the light ink is
+CREDIT_SWITCH, CREDIT_FADE, CREDIT_JUMP, CREDIT_SHADE = (120, 165), 8, 45, 0.5
 STATUS = {'none': 'DESIGN FILES ONLY  /  NOT YET BUILT', 'photos': 'BUILT  /  NOT YET TESTED',
           'testing': 'BUILT  /  ON THE BENCH'}
 
@@ -112,14 +116,26 @@ def status(cfg):
     return STATUS['testing'] if 'testing' in kinds else STATUS['photos'] if kinds else STATUS['none']
 
 
+def end_frames(cfg):
+    """how long the end card stands: reel.json's `end.frames`, else 2.5 s"""
+    return int((cfg.get('end') or {}).get('frames', END_FRAMES))
+
+
 def end_card(cfg, size, i):
-    """title, a rule and the status, then who made it; each part slides up on its own delay, the card drifts in"""
+    """title, a rule and the status, then who made it on the foot line; each part slides up on its own delay. The
+    title block grows slowly from the left margin; the foot line stays still on the safe margin, level with the credit.
+    reel.json's `end` may change it: `title` (default the reel's), `by` (default "Made by the Hive"), `links` (a list,
+    default hivelab.ca), `frames` (how long it stands, default 75) and `status`: false leaves the status line out and
+    puts `by` under the rule in its place. `voice` ({"file": a recording, "at": seconds into the card, default 0.4}) is
+    a line said over the card: nothing is drawn for it, the score mixes it in (reel.py, score.mjs)"""
     W, H = size
     s = W / 1920
-    im = Image.new('RGB', (W, H), K.CARD_PAPER)
-    lay = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    e = cfg.get('end', {})
+    name, by, links = e.get('title', cfg.get('title', 'A board')), e.get('by', 'Made by the Hive'), e.get('links', ['hivelab.ca'])
+    says = e.get('status', True)
+    lay, foot = Image.new('RGBA', (W, H), K.CARD_PAPER + (255,)), Image.new('RGBA', (W, H), (0, 0, 0, 0))
 
-    def put(delay, draw):
+    def put(lay, delay, draw):
         k = ease_out((i - delay) / 16)
         if k <= 0:
             return
@@ -132,38 +148,69 @@ def end_card(cfg, size, i):
 
     def title(d, k):
         f, xx = K.font('display', 104 * s), x
-        for ch in cfg.get('title', 'A board'):
+        for ch in name:
             d.text((xx, 560 * s), ch, font=f, fill=K.CARD_INK + (255,), anchor='ls')
             xx += f.getlength(ch) - 2.1 * s
 
     def rule(d, k):
         d.line([(x, 610 * s), (x + 464 * s * k, 610 * s)], fill=K.CARD_INK + (255,), width=max(1, round(2 * s)))
-        d.text((x, 664 * s), status(cfg), font=K.font('mono', 26 * s), fill=K.CARD_INK2 + (255,), anchor='ls')
+        if says:
+            d.text((x, 664 * s), status(cfg), font=K.font('mono', 26 * s), fill=K.CARD_INK2 + (255,), anchor='ls')
+        else:
+            d.text((x, 672 * s), by, font=K.font('body', 38 * s), fill=K.CARD_INK + (255,), anchor='ls')
 
     def made(d, k):
-        fb, y = K.font('body', 34 * s), H - 62 * s      # the line's descenders sit on the 5% safe margin, not under it
-        d.text((x, y), 'Made by the Hive', font=fb, fill=K.CARD_INK + (255,), anchor='ls')
-        d.text((x + fb.getlength('Made by the Hive') + 36 * s, y), 'hivelab.ca', font=K.font('mono', 26 * s),
-               fill=K.CARD_INK2 + (255,), anchor='ls')
-    put(0, title)
-    put(5, rule)
-    put(10, made)
-    im = im.convert('RGBA')
-    im.alpha_composite(lay)
-    return zoom(im.convert('RGB'), 1 + 0.08 * min(1., i / END_FRAMES), anchor=(0, 0.5))   # anchored on the left margin
-
-
-def credit(cfg, im):
-    """an optional credit (reel.json `credit`), small in the lower right of every frame; none by default"""
-    if not cfg.get('credit'):
-        return im
-    W, H = im.size
-    s = W / 1920
-    lay = Image.new('RGBA', (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(lay).text((W - 56 * s, H - 44 * s), cfg['credit'], font=K.font('mono', 24 * s), fill=K.CARD_INK2 + (240,), anchor='rs')
-    im = im.convert('RGBA')
-    im.alpha_composite(lay)
+        fb, fm, y, xx = K.font('body', 34 * s), K.font('mono', 26 * s), H - 62 * s, x   # the descenders sit on the 5% safe margin
+        if says:
+            d.text((xx, y), by, font=fb, fill=K.CARD_INK + (255,), anchor='ls')
+            xx += fb.getlength(by) + 36 * s
+        d.text((xx, y), '  /  '.join(links), font=fm, fill=K.CARD_INK2 + (255,), anchor='ls')
+    put(lay, 0, title)
+    put(lay, 5, rule)
+    put(foot, 10, made)
+    im = zoom(lay.convert('RGB'), 1 + 0.08 * min(1., i / end_frames(cfg)), anchor=(96 / 1920, 0.5)).convert('RGBA')   # the left margin stays put
+    im.alpha_composite(foot)
     return im.convert('RGB')
+
+
+class Credit:
+    """an optional credit (reel.json `credit`), small in the lower right of every frame, on the end card's margins;
+    none by default. Its ink follows the picture under it: paper on a dark picture, ink on a light one. It changes
+    at once on a cut (the film's own, or one inside a clip: the picture under it jumps) and over CREDIT_FADE frames
+    inside a shot, and only when the picture is well past the middle (CREDIT_SWITCH), so a corner that hovers there
+    does not make it flicker. The light ink carries a soft shade of the picture's own dark, so it reads on mid tones"""
+
+    def __init__(self, cfg):
+        self.text, self.u, self.want, self.was = cfg.get('credit'), None, 0.0, None      # u: 0 the light ink, 1 the dark
+
+    def __call__(self, im, cut=False):
+        if not self.text:
+            return im
+        W, H = im.size
+        s = W / 1920
+        f, at = K.font('medium', 25 * s), (W - 96 * s, H - 62 * s)
+        box = [int(round(v)) for v in ImageDraw.Draw(im).textbbox(at, self.text, font=f, anchor='rs')]
+        under = ImageStat.Stat(im.crop(tuple(box)).convert('L')).mean[0]
+        if self.u is None or cut or abs(under - self.was) > CREDIT_JUMP:
+            self.want = self.u = 1.0 if under > sum(CREDIT_SWITCH) / 2 else 0.0
+        else:
+            self.want = 1.0 if under > CREDIT_SWITCH[1] else 0.0 if under < CREDIT_SWITCH[0] else self.want
+            self.u += max(-1 / CREDIT_FADE, min(1 / CREDIT_FADE, self.want - self.u))
+        self.was = under
+        ink = tuple(int(round(a + (b - a) * self.u)) for a, b in zip(K.CARD_PAPER, K.CARD_INK2))
+        m = int(round(24 * s))
+        x0, y0, x1, y1 = max(0, box[0] - m), max(0, box[1] - m), min(W, box[2] + m), min(H, box[3] + m)
+        word = Image.new('L', (x1 - x0, y1 - y0), 0)
+        ImageDraw.Draw(word).text((at[0] - x0, at[1] - y0), self.text, font=f, fill=255, anchor='rs')
+        part = im.crop((x0, y0, x1, y1))
+        if self.u < 1:      # the shade: the picture darkened softly round the word, gone as the ink turns dark
+            shade = word.filter(ImageFilter.GaussianBlur(7 * s)).point(lambda v: min(255, int(v * 2.2 * CREDIT_SHADE * (1 - self.u))))
+            part = Image.composite(Image.new('RGB', part.size, (0, 0, 0)), part, shade)
+        k = (200 + 40 * self.u) / 255
+        part = Image.composite(Image.new('RGB', part.size, ink), part, word.point(lambda v: int(v * k)))
+        im = im.copy()
+        im.paste(part, (x0, y0))
+        return im
 
 
 def shot_dir(cfg, name, quality):
@@ -180,7 +227,8 @@ def frames(cfg, quality, marks):
                 if f != cur:
                     cur, k = f, k + 1
                     marks['shots'].append(dict(name=line['slot'] if k == 1 else '%s %d' % (line['slot'], k),
-                                               section='slot', start=n / K.FPS, frames=0))
+                                               section=line.get('section', 'slot'), slot=line['slot'],
+                                               start=n / K.FPS, frames=0))
                 marks['shots'][-1]['frames'] += 1
                 yield line['slot'], im
                 n += 1
@@ -218,8 +266,8 @@ def frames(cfg, quality, marks):
             yield line['name'], im
             last = im
             n += 1
-    marks['shots'].append(dict(name='end', section='end', start=n / K.FPS, frames=END_FRAMES))
-    for i in range(END_FRAMES):      # a hard cut on the beat; the card's own parts then move in
+    marks['shots'].append(dict(name='end', section='end', start=n / K.FPS, frames=end_frames(cfg)))
+    for i in range(end_frames(cfg)): # a hard cut on the beat; the card's own parts then move in
         yield 'end', end_card(cfg, size, i)
 
 
@@ -234,9 +282,10 @@ def cut(cfg, quality='preview', out=None, sheet=None):
                            '-r', str(K.FPS), '-i', '-', '-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p',
                            '-c:v', 'libx264', '-crf', '17', *TAGS, '-movflags', '+faststart', tmp], stdin=subprocess.PIPE)
     marks = dict(fps=K.FPS, shots=[], lands=[], hits=[])
-    keep, n = [], 0
+    keep, n, credit, shots = [], 0, Credit(cfg), 0
     for name, im in frames(cfg, quality, marks):
-        ff.stdin.write(credit(cfg, im).tobytes())
+        ff.stdin.write(credit(im, len(marks['shots']) != shots).tobytes())
+        shots = len(marks['shots'])
         if n % 45 == 22:
             keep.append(im.resize((480, 270)))
         n += 1

@@ -6,11 +6,17 @@ at the end dissolves into the filmed board.
     blender -b -P match.py -- OUTDIR FRAMES real=DIR match=MATCH.json [fall] [k0= mix=A,B lut=FILE.cube look=FILE.json
                               land=A,B pow= slow=A,B h0= over= blur= sun= sky=R,G,B open= window=S,E,A,B gain=R,G,B level= fstop=
                               studio=1 floor=R,G,B pool=MM sweep=A,B[,TURN] upright=1 case=DIR petg=R,G,B
-                              side=1 comp=1 probe=1]
+                              drop=A,B crisp=1 side=1 comp=1 probe=1]
 
 Frame F of the shot is frame k0 + F of the clip. Up to mix A the picture is the render over the clean table, from A
 to B it dissolves into the filmed frame, after B it is the filmed frame alone (so the cut never shows a seam). The
-render is made at the clip's own size, never larger, and goes through the same grade (lut=) as the clip.
+render is made at the clip's own size, never larger, and goes through the same grade (lut=) as the clip. It is
+softened by as much as the solver found the clip to be soft on that frame ("sigma", in the clip's pixels), so that
+the two are one picture where they meet; crisp=1 leaves it as sharp as it was rendered, for a render that is looked
+at by itself for most of the shot and meets the clip only in a line of light. With studio=1 the render is alone in
+the picture until the clip shows, so it is made at the film's size even when the clip is smaller (a 1080p take in a
+1440p film: the filmed frames are enlarged, the render is not), and it takes the clip's softness on only over the
+12 frames before the clip shows.
 
 The render's light becomes the clip's pixel values the way the camera made them: times the camera's gain for each
 colour (gain=, or "camera": {"gain": [r, g, b]} in the look file: how much of full white a white card in this sun
@@ -68,7 +74,10 @@ case=DIR: the board's printed case (base.stl and lid.stl from the enclosure tool
 which has the board's top-left corner at (0, 90, 1.6)) stands round the board, in petg= plastic, and match.json is the
 solve of a take of the closed case. The base stands on the table from the first frame; the board drops into it and
 the lid drops shut on it (land=A,B: the frames they land on; slow=, h0=, over= as for fall), both from above the
-picture, and both go to events.json as hits. upright=1 then makes the line of light an upright sheet, not one that
+picture, and both go to events.json as hits. drop=A,B gives the millimetres each is let go from instead: a short shot
+cannot wait for a fall from above the picture, so its board is let go low and early, and is in the picture and falling
+on the first frame (a cut onto a thing that falls; it does not appear). What is let go after the first frame must
+still be out of the picture when it is, shadow and all, or the script stops and says so. upright=1 then makes the line of light an upright sheet, not one that
 holds the sun's direction: over a box as tall as a case a low sun's sheet leans most of the box's width, and the
 picture would turn over by table that is far behind the box. An upright sheet cuts the box and the table in one
 section, the picture turns over at each pixel's own place, and the line is drawn on all it meets.
@@ -109,8 +118,8 @@ FR = {r['k']: r for r in M['frames']}
 K0 = int(kv.get('k0', min(k for k, r in FR.items() if 'gain' in r) - 1))
 MIX = [int(v) for v in kv.get('mix', '%d,%d' % (NF + 1, NF + 2)).split(',')]
 W, H = M['size']
-RW = min(W, K.SIZES[Q][0])                      # the render is never larger than the clip it has to sit in
-RH = int(round(RW * H / W))
+STUDIO = bool(kv.get('studio'))
+RW, RH = K.match_size((W, H), Q, STUDIO)         # on the filmed table never larger than the clip; in the studio the film's size
 GAMMA = 2.2                                     # the power the solver put on pixel values for match.json's shadow levels
 EVENTS = dict(lands=[], hits=[], refs=0)
 REAL = path(kv['real'])
@@ -120,8 +129,8 @@ LEVEL0 = float(kv.get('level', LOOK.get('camera', {}).get('level', 0)))        #
 OWN = any('src' in r for r in FR.values())      # a steadied film: a frame's "gain" is the whole film's mean, its own level is the source frame's
 LV = {k: float((r['src'] if OWN else r)['gain']) for k, r in FR.items() if ('src' in r if OWN else 'gain' in r)}
 LV = {k: float(np.mean([LV[j] for j in range(k - 3, k + 4) if j in LV])) for k in LV}      # each was measured by itself: a per cent of jitter, which a board must not flicker with
-STUDIO = bool(kv.get('studio'))
 SW = [float(v) for v in kv['sweep'].split(',')] if kv.get('sweep') else None
+CRISP = bool(kv.get('crisp'))                   # the render is not given the clip's softness
 FIX = np.array(M['fix'], np.float32) if M.get('fix') else None
 LAST = int(SW[1]) - 1 if SW else MIX[1] - 1     # the last frame that needs the render
 
@@ -480,8 +489,8 @@ def load(p, size=None):
     if b.has_error:
         raise SystemExit('match: cannot read %s: %s' % (p, b.geterror()))
     sp = b.spec()
-    if size and (sp.width, sp.height) != tuple(size):
-        b = oiio.ImageBufAlgo.resize(b, roi=oiio.ROI(0, size[0], 0, size[1], 0, 1, 0, sp.nchannels))
+    if size and (sp.width, sp.height) != tuple(size):   # enlarged with a filter that keeps what detail the picture has (the default one for enlarging is soft)
+        b = oiio.ImageBufAlgo.resize(b, filtername='lanczos3' if size[0] > sp.width else '', roi=oiio.ROI(0, size[0], 0, size[1], 0, 1, 0, sp.nchannels))
     return np.asarray(b.get_pixels(oiio.FLOAT), np.float32)[..., :3]
 
 
@@ -975,16 +984,37 @@ if CASE:
             o.matrix_parent_inverse = e.matrix_world.inverted()
         return e
 
+    def shows(e, F, h, pad=12.0):
+        """whether a rig h metres above its seat, or the shadow it throws on the table, can be in the picture on frame F: its
+        box (pad millimetres larger: it is tilted, and a shadow's edge is soft) through that frame's camera"""
+        pts = np.array([ob.matrix_world @ Vector(c) for ob in e.children_recursive if ob.type == 'MESH' for c in ob.bound_box])
+        a, b = (pts.min(0) - ORG) * 1000.0 - pad, (pts.max(0) - ORG) * 1000.0 + pad
+        X = np.array([(x, y, z + h * 1000.0) for x in (a[0], b[0]) for y in (a[1], b[1]) for z in (a[2], b[2])])
+        fr = FR[K0 + F]
+        R, t, f = np.array(fr['R']).reshape(3, 3), np.array(fr['t']), fr['f']
+        for Y in (X, X + ((TD - X @ TN) / (LIGHT @ TN))[:, None] * LIGHT[None]):
+            p = Y @ R.T + t
+            if (p[:, 2] <= 0).any():
+                return True
+            u, v = f * p[:, 0] / p[:, 2] + M['centre'][0], f * p[:, 1] / p[:, 2] + M['centre'][1]
+            if u.max() >= 0 and u.min() < W and v.max() >= 0 and v.min() < H:
+                return True
+        return False
+
     LA, LB = (float(v) for v in kv.get('land', '16,36').split(','))
     G = 9.81 / float(kv.get('slow', '2.5').split(',')[0]) ** 2
     HMIN, OVER = float(kv.get('h0', 0.04)), float(kv.get('over', 0.05))
-    for name, objs, land, tilt in (('board_rig', [o for o in board + parts if o.parent is None], LA, (0.10, -0.06, 0.0)),
-                                   ('lid_rig', CASE[1:], LB, (-0.08, 0.05, 0.0))):
+    DROP = [float(v) / 1000 for v in kv['drop'].split(',')] if kv.get('drop') else None
+    for i, (name, objs, land, tilt) in enumerate((('board_rig', [o for o in board + parts if o.parent is None], LA, (0.10, -0.06, 0.0)),
+                                                  ('lid_rig', CASE[1:], LB, (-0.08, 0.05, 0.0)))):
         e = rig(name, objs)
-        H0 = max(HMIN, clear_height(e, int(math.ceil(land))) + OVER)    # from above the picture, as the parts are
+        H0 = DROP[i] if DROP else max(HMIN, clear_height(e, int(math.ceil(land))) + OVER)    # from above the picture, as the parts are
         T0 = math.sqrt(2 * H0 / G)
         f0 = land - T0 * 30
         fa = max(1, int(math.floor(f0)))
+        if DROP and fa > 1 and shows(e, fa, H0):
+            raise SystemExit('match: %s, let go %.0f mm up on frame %.1f, would appear in mid-air: it or its shadow is in the picture there. '
+                             'Let it go from higher, or land it sooner' % (name, H0 * 1000, f0))
         if fa > 1:
             for ob in list(e.children_recursive):
                 ob.hide_render = True
@@ -1034,6 +1064,12 @@ def filmed(k):
     raise SystemExit('match: no filmed frame %05d (.png or .jpg) in %s' % (k, M['real']))
 
 
+def meets(F):
+    """how much of the clip's softness the render is given on frame F: in the studio it is alone until the clip shows
+    (the line of light, or the dissolve), and is left as sharp as it was rendered until shortly before that"""
+    return K.match_soft(F, SWA if SW else MIX[0], STUDIO)
+
+
 def compose(F):
     k = K0 + F
     r = FR[k]
@@ -1045,7 +1081,7 @@ def compose(F):
     pic = cg = P = None
     if w != 1:
         fg, a0, sc0, idx, P = layers(exr(F))
-        s = r.get('sigma', 0.0) * RW / W
+        s = 0.0 if CRISP else r.get('sigma', 0.0) * RW / W * meets(F)
         fg, a = soften(fg, s), soften(a0, s)[..., None]
         # all of it as light the camera takes, then the camera's curve once
         lv = level(k)                                     # the sun's own strength on this frame: on the board as it is on the table

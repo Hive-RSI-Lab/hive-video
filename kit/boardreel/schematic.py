@@ -2,9 +2,19 @@
 
     python3 schematic.py SHEET.kicad_sch OUT/ --frames 60 [--crop X0,Y0,X1,Y1] [--width 4000] [--t A,B] [--pow P]
                          [--order in:FX,FY | out:FX,FY | sweep:FX0,FY0:FX1,FY1] [--fade F] [--bold N]
+                         [--plot FULL.pdf [--bare BARE.pdf] [--page N]]
 
 Drawn from the file itself (schem.py), so it needs no KiCad. Each part is wiped in left to right, then the wires it
 starts grow along their real path. The newest ink is amber and settles to ink.
+
+  --plot     the ink is KiCad's own plot of the sheet (`kicad-cli sch export pdf --black-and-white`; needs pdftoppm):
+             its lettering, pin numbers, values, frame and title block, as the designer sees them. The order and
+             the timing stay this tool's: every plotted pixel appears with the stroke nearest to it. --bare is the
+             same plot made with --exclude-drawing-sheet: what is in FULL and not in BARE (the frame, its zone
+             marks, the title block) is on the paper from the first frame, as on a printed drawing sheet. Without
+             --bare, ink further than 14 mm from every stroke is. --page: the sheet's page in a root's plot
+             (default: the page whose title block names the file). --bold N then thickens the plot's lines by N
+             pixels: a whole A0 sheet seen from far needs it, a close-up does not.
 
   --crop     the part of the sheet to draw, in sheet millimetres (y down). A big sheet (A2 and up) is too small to
              read whole, so draw it as close-ups. Only the parts and wires that touch the crop are timed, so the
@@ -22,10 +32,13 @@ import argparse
 import json
 import math
 import os
+import re
+import shutil
+import subprocess
 import sys
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import INK, AMBER, PAPER, font  # noqa: E402
@@ -207,12 +220,162 @@ def raster(doc, items, crop, width, bold=0):
     return a, T
 
 
-def render(sheet, out, frames, crop=None, width=4000, t=(0.0, 1.0), pw=1.0, order=None, fade=0.012, bold=0.0, doc=None):
+def plot_page(pdf, sheet):
+    """the page of a KiCad plot that is this sheet: the one whose title block names the file (a root's plot has a
+    page for every sheet under it, and the root's own page names them all: the title block's is the last)"""
+    n = int(re.search(r'Pages:\s+(\d+)', subprocess.run(['pdfinfo', pdf], capture_output=True, text=True, check=True).stdout).group(1))
+    want = os.path.basename(sheet)
+    for p in range(1, n + 1) if n > 1 else ():
+        txt = subprocess.run(['pdftotext', '-f', str(p), '-l', str(p), '-layout', pdf, '-'], capture_output=True, text=True).stdout
+        names = re.findall(r'File:\s*(\S+)', txt)
+        if names and names[-1] == want:
+            return p
+    if n == 1:
+        return 1
+    raise SystemExit('schematic: no page of %s is %s' % (pdf, want))
+
+
+def plot_ink(pdf, page, crop, width, tmp, bold=0.0):
+    """ink alpha (0..1) of a plot's page, WIDTH px across the crop (sheet millimetres)"""
+    x0, y0, x1, y1 = crop
+    W, H = width * SS, round(width * (y1 - y0) / (x1 - x0)) * SS
+    dpi = W * 25.4 / (x1 - x0)
+    os.makedirs(tmp, exist_ok=True)
+    try:
+        subprocess.run(['pdftoppm', '-r', '%.5f' % dpi, '-x', str(round(x0 / 25.4 * dpi)), '-y', str(round(y0 / 25.4 * dpi)),
+                        '-W', str(W), '-H', str(H), '-gray', '-png', '-singlefile', '-f', str(page), '-l', str(page),
+                        pdf, os.path.join(tmp, 'p')], check=True)
+        im = Image.open(os.path.join(tmp, 'p.png')).convert('L')
+        im.load()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if im.size != (W, H):                           # a crop that runs past the page: the rest is paper
+        full = Image.new('L', (W, H), 255)
+        full.paste(im, (0, 0))
+        im = full
+    im = ImageChops.invert(im)
+    if bold >= 0.5:
+        im = im.filter(ImageFilter.MaxFilter(2 * round(bold) + 1))
+    return np.asarray(im.resize((W // SS, H // SS), Image.BOX), dtype=np.float32) / 255.0
+
+
+def nearest(seed):
+    """for every cell the row and column of the nearest True cell of `seed`, and how far it is in cells (jump
+    flooding: each cell asks neighbours at halving distances which seed they know)"""
+    H, W = seed.shape
+    yy, xx = (v.astype(np.int32) for v in np.mgrid[0:H, 0:W])
+    far = 2 ** 60
+    sy, sx = np.where(seed, yy, -1), np.where(seed, xx, -1)
+    d = np.where(seed, 0, far).astype(np.int64)
+    step, steps = 1 << max(0, (max(H, W) - 1).bit_length() - 1), []
+    while step >= 1:
+        steps.append(step)
+        step //= 2
+    for step in steps + [1]:                        # a second pass at 1 mends the few cells the method misses
+        for dy in (-step, 0, step):
+            for dx in (-step, 0, step):
+                a, b, c, e = max(0, -dy), H - max(0, dy), max(0, -dx), W - max(0, dx)
+                if not (dy or dx) or a >= b or c >= e:
+                    continue
+                ny, nx = sy[a + dy:b + dy, c + dx:e + dx], sx[a + dy:b + dy, c + dx:e + dx]
+                nd = (ny - yy[a:b, c:e]).astype(np.int64) ** 2 + (nx - xx[a:b, c:e]).astype(np.int64) ** 2
+                nd[ny < 0] = far
+                m = nd < d[a:b, c:e]
+                d[a:b, c:e][m] = nd[m]
+                ky, kx = ny[m], nx[m]
+                sy[a:b, c:e][m] = ky
+                sx[a:b, c:e][m] = kx
+    return sy, sx, np.sqrt(d.astype(np.float64))
+
+
+def runs(m, n, axis):
+    """the cells of a mask that lie in a straight run of at least n cells along the axis"""
+    view = np.lib.stride_tricks.sliding_window_view
+    e = view(m, n, axis=axis).all(axis=-1)          # a run of n starts here
+    pad = [(0, 0), (0, 0)]
+    pad[axis] = (n - 1, n - 1)
+    return view(np.pad(e, pad), n, axis=axis).any(axis=-1)
+
+
+def spread(m, n, axis):
+    """a mask grown by n cells both ways along the axis"""
+    pad = [(0, 0), (0, 0)]
+    pad[axis] = (n, n)
+    return np.lib.stride_tricks.sliding_window_view(np.pad(m, pad), 2 * n + 1, axis=axis).any(axis=-1)
+
+
+def plotted(doc, items, crop, width, out, plot, bare=None, page=None, bold=0.0):
+    """the plot's ink, timed by this tool's strokes: (alpha, the time each pixel appears; 0 = on the paper already)"""
+    x0, y0, x1, y1 = crop
+    a = plot_ink(plot, page, crop, width, os.path.join(out, '.plot'), bold)
+    wq = min(width, 1000)                           # the strokes at a coarser grain: enough to say when, and quick
+    _, tq = raster(doc, items, crop, wq)
+    T = np.zeros(a.shape, np.float64)
+    seed = tq < 1.5
+    if not seed.any():
+        return a, T
+    sy, sx, dist = nearest(seed)
+
+    def grid(n, m):                                 # for each of n cells in a row, the one of m it lies in
+        return np.minimum(m - 1, np.arange(n) * m // n)
+    cy, cx = grid(a.shape[0], tq.shape[0])[:, None], grid(a.shape[1], tq.shape[1])[None, :]
+    T = tq[sy[cy, cx], sx[cy, cx]]
+    ab = plot_ink(bare, page, crop, width, os.path.join(out, '.plot'), bold) if bare else a
+    # Lettering appears a word at a time. A label lies between strokes, and letter by letter its nearest one differs,
+    # so it would come in pieces. What is not a straight run of 2 mm or more is lettering (and dots, arrow heads,
+    # crosses): its letters are joined to their neighbours, and each such word takes the earliest time in it.
+    ww = min(width, round(6.0 * (x1 - x0)))
+    hh = max(1, round(ww * a.shape[0] / a.shape[1]))
+    ppm = ww / (x1 - x0)
+    m = np.asarray(Image.fromarray((ab * 255).astype(np.uint8)).resize((ww, hh), Image.BOX)) > 20
+    n = max(3, round(2.0 * ppm))
+    lines = runs(m, n, 0) | runs(m, n, 1) if min(hh, ww) > n else np.zeros_like(m)
+    small = m & ~lines
+    # joined along the line of writing as far as an underscore is wide (one that touches its wire counts as line),
+    # and across a line the word lies over; the lines themselves keep their own times
+    rl, rs = max(1, round(0.7 * ppm)), max(1, round(0.2 * ppm))
+    word = spread(spread(small, rl, 1), rs, 0) | spread(spread(small, rs, 1), rl, 0)
+    far = 1e9
+    wy, wx = grid(hh, tq.shape[0])[:, None], grid(ww, tq.shape[1])[None, :]
+    tw = np.where(small, tq[sy[wy, wx], sx[wy, wx]], far)
+    for _ in range(max(2, round(30.0 * ppm))):
+        pad = np.pad(tw, 1, constant_values=far)
+        nt = tw.copy()
+        for dy in (0, 1, 2):
+            for dx in (0, 1, 2):
+                np.minimum(nt, pad[dy:dy + hh, dx:dx + ww], out=nt)
+        nt[~word] = far
+        if np.array_equal(nt, tw):
+            break
+        tw = nt
+    tw[lines] = far
+    ts = tw[grid(a.shape[0], hh)[:, None], grid(a.shape[1], ww)[None, :]]
+    T = np.where(ts < far, ts, T)
+    if bare:                                        # the drawing sheet itself: frame, zone marks, title block
+        T[a - ab > 0.2] = 0.0
+    else:
+        T[dist[cy, cx] > 14.0 * wq / (x1 - x0)] = 0.0
+    return a, T
+
+
+def squeeze(tv, bins=4000):
+    """the drawing's time with the stretches cut out in which no ink appears (strokes outside the crop, text KiCad's
+    plot hides), so that the pen never stands still for a frame"""
+    h, edge = np.histogram(tv, bins=bins, range=(0.0, 1.0))
+    w = np.concatenate([[0.0], np.cumsum(h > 0)])
+    return np.clip(np.interp(tv, edge, w / max(1.0, w[-1])), 1e-6, 1.0)
+
+
+def render(sheet, out, frames, crop=None, width=4000, t=(0.0, 1.0), pw=1.0, order=None, fade=0.012, bold=0.0, doc=None,
+           plot=None, bare=None, page=None):
     doc = doc or schem.parse(sheet)
     crop = tuple(crop) if crop else (0.0, 0.0) + tuple(doc['size'])
     items, used = plan(doc, crop, order)
-    a, T = raster(doc, items, crop, width, bold)
     os.makedirs(out, exist_ok=True)
+    if plot:
+        a, T = plotted(doc, items, crop, width, out, plot, bare, page or plot_page(plot, sheet), bold)
+    else:
+        a, T = raster(doc, items, crop, width, bold)
     ys, xs = np.nonzero(a > 0.02)
     av, tv = a[ys, xs], T[ys, xs]
     tv[tv > 1.5] = 0.0                              # ink no stroke owns (none, normally) is there from the start
@@ -220,6 +383,7 @@ def render(sheet, out, frames, crop=None, width=4000, t=(0.0, 1.0), pw=1.0, orde
     if own.any():                                   # time runs over this crop's own strokes, so its last frame still draws
         lo, hi = tv[own].min(), tv[own].max()
         tv[own] = (tv[own] - lo) / max(1e-9, hi - lo) * (1 - 1e-6) + 1e-6
+        tv[own] = squeeze(tv[own])
     tl = np.sort(tv)
     ink, amb, wh = (np.array(c, np.float32) for c in (INK, AMBER, PAPER))
     base = np.full(a.shape + (3,), 255, np.uint8)
@@ -254,9 +418,12 @@ def main(argv=None):
     ap.add_argument('--order')
     ap.add_argument('--fade', type=float, default=0.012)
     ap.add_argument('--bold', type=float, default=0.0)
+    ap.add_argument('--plot')
+    ap.add_argument('--bare')
+    ap.add_argument('--page', type=int)
     o = ap.parse_args(argv)
     m = render(o.sheet, o.out, o.frames, [float(v) for v in o.crop.split(',')] if o.crop else None, o.width,
-               tuple(float(v) for v in o.t.split(',')), o.pow, o.order, o.fade, o.bold)
+               tuple(float(v) for v in o.t.split(',')), o.pow, o.order, o.fade, o.bold, plot=o.plot, bare=o.bare, page=o.page)
     print(o.frames, 'frames,', m['groups'], 'groups; fewest new ink pixels on a frame:', min(m['new'] or [0]))
 
 
