@@ -159,7 +159,7 @@ def absolute_models(text, board):
             path = os.path.normpath(path)
         return m.group(1) + _q(path) + '"'
     text = re.sub(r'(\(model\s+")((?:[^"\\]|\\.)*)"', fix, text)
-    return text.replace('${KIPRJMOD}', here)   # an unquoted path in a KiCad 5 board
+    return text.replace('${KIPRJMOD}', _q(here))   # an unquoted path in a KiCad 5 board, other quoted fields
 
 
 def needs_body(fp):
