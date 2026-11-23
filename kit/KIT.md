@@ -168,13 +168,12 @@ then CUDA) with the official Blender build in ~/.cache/hive-video, which reel.py
 1.2 GB of card memory. `device=cpu` in a shot's args, or `REEL_DEVICE=cpu`, forces the CPU. `heights` is the enclosure tool's
 heights.json: the stand-in bodies take their heights from it, and a library model that is the wrong size for its part
 (a 7.7 mm can for a 13 mm capacitor) is given the part's real height, its straight wall made longer and not the whole
-model stretched (`shots/_shot.py`, `heights`). `projects/hifi-reel/reel.json` on H2 is a whole one.
+model stretched (`shots/_shot.py`, `heights`).
 
 **A render that ends in the filmed board.** A `match` shot (`shots/match.py`, its header is the manual) stands the
 design's board in a filmed clip. The clip is solved beforehand into a match file (`match=@match/NAME.json`: a camera
 for every frame, the table's plane, the way the sunlight travels, the wood's colour in sun and shade, the filmed
-frames' folder); the solve is the film's own work, and `projects/hifi-reel/match/` on H2 is one for a board on a table
-and one for a closed case. The render then has the clip's lens and light, goes through the clip's grade (`lut=`), and
+frames' folder); the solve is the film's own work (for example, one for a board on a table and one for a closed case). The render then has the clip's lens and light, goes through the clip's grade (`lut=`), and
 `sweep=A,B` sends a line of the clip's own sunlight across the picture, the render ahead of it and the filmed frame
 behind it, so the cut out of the shot is the take itself. `studio=1` stands the render on a dark floor that fades to
 black, not on the filmed table: parts fall in a void and the line turns it into the room (it reads as a render becoming
@@ -239,10 +238,12 @@ fifth, once the film has resolved). A clip plays its first `max` seconds (defaul
 colours named (BT.709, video range), and an HD camera clip with no colour tag is read as BT.709: ffmpeg alone would
 guess BT.601 and give it a green cast.
 
-Long finals on a busy machine: memguard kills the biggest plain `heavy` job in a memory stall, and a 1440p board run holds
-about 3.5 GB of RAM, so it is often the one. A shot resumes until three runs in a row land no frame. For tier 1 work run
-the Blender jobs in the spared lane with short runs, so other tier 1 jobs wait at most one: `REEL_RUN="heavy --first timeout 1200"`.
-GPU runs take turns on the card through `flock ~/.cache/hive-video/gpu.lock`, the same lock `video blender` holds.
+Long finals on a busy machine: a memory guard that kills the biggest job in a stall, or a time cap, can stop a 1440p
+board run (it holds about 3.5 GB of RAM). A shot resumes from the frames on disk (a frame cut off mid-write is drawn
+again) until three runs in a row land no frame. On a shared machine run the Blender jobs in a protected lane with short
+runs, through `$REEL_RUN` (for example a wrapper that spares the job and caps each run at 20 minutes).
+GPU runs take turns on the card through `flock ~/.cache/hive-video/gpu.lock`, the same lock `video blender` holds; the
+lock is taken outside `$REEL_RUN`, so waiting for the card does not use up a run's time cap.
 
 **The rules are checks, not advice.** `reel.py check` fails the film when any of these break:
 - every schematic cut adds ink on every frame it shows, first to last (`drawing`);

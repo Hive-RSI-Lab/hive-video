@@ -1,4 +1,4 @@
-"""The request, typed: the person's real prompt drawn in ink on a sheet, the newest ink amber, the phrases that
+"""The request, typed: the real prompt drawn in ink on a sheet, the newest ink amber, the phrases that
 became requirements underlined as they are typed. Frames for paper.py's seq= input.
 
     python3 prompt.py PROMPT.txt OUT/ --frames 60 [--hold 45] [--phrase 'TEXT' ...] [--label 'THE REQUEST, AS WRITTEN']

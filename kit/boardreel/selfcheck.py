@@ -323,10 +323,13 @@ def reel_cases(tmp):
     open(os.path.join(sheet, '00000.png'), 'w').write('a larger drawing')
     d1 = reel.deps(cfg, ['seq=' + sheet, 'lens=50'])
     check('R11e a folder of frames made outside prep re-renders its shot when it is made again', d0 and d0 != d1, (d0, d1))
+    from PIL import Image
+    tpl = os.path.join(tmp, 'tpl.png')   # a whole PNG: the resume drops a frame without its IEND end as cut off mid-write
+    Image.new('RGB', (2, 2)).save(tpl)
     fake = os.path.join(tmp, 'blender')   # writes every frame, orbit too, then dies as the time cap kills it
     open(fake, 'w').write('#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done; shift\n'
                           'n=$(($2 + $(echo "$@" | sed -n "s/.*orbit=\\([0-9]*\\).*/\\1/p")))\n'
-                          'for f in $(seq 1 $n); do : > $(printf "%s/%04d.png" "$1" $f); done; exit 124\n')
+                          'for f in $(seq 1 $n); do cp ' + tpl + ' $(printf "%s/%04d.png" "$1" $f); done; exit 124\n')
     os.chmod(fake, 0o755)
     cfg = cfg_in(tmp, shots=[dict(name='o', shot='board', frames=3, args='orbit=2')])
     env = {k: os.environ.get(k) for k in ('BLENDER', 'REEL_RUN', 'REEL_DEVICE', 'REEL_QUIET')}
@@ -342,6 +345,53 @@ def reel_cases(tmp):
             os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
     check('R11d a board shot counts its orbit frames, and a run the time cap ends after its last frame is done',
           got == (['%04d.png' % f for f in range(1, 6)], True), got)
+
+    # a run killed with frames to go: each run lands one whole frame and leaves the next one cut off mid-write
+    runs = os.path.join(tmp, 'runs')
+    step = os.path.join(tmp, 'blender-step')
+    open(step, 'w').write('#!/bin/sh\necho x >> ' + runs + '\nwhile [ "$1" != -- ]; do shift; done; shift\n'
+                          'for f in $(seq 1 $2); do p=$(printf "%s/%04d.png" "$1" $f)\n'
+                          '  if [ -f $p ] && tail -c 8 $p | grep -q IEND; then continue; fi\n'
+                          '  cp ' + tpl + ' $p; q=$(printf "%s/%04d.png" "$1" $((f + 1))); head -c 20 ' + tpl + ' > $q 2>/dev/null; exit 137\n'
+                          'done; exit 0\n')
+    os.chmod(step, 0o755)
+    stall = os.path.join(tmp, 'blender-stall')   # lands nothing, every run
+    open(stall, 'w').write('#!/bin/sh\necho x >> ' + runs + '\nexit 137\n')
+    os.chmod(stall, 0o755)
+    import time as _time
+    sleep, _time.sleep = _time.sleep, lambda s: None
+    env = {k: os.environ.get(k) for k in ('BLENDER', 'REEL_RUN', 'REEL_DEVICE', 'REEL_QUIET')}
+    os.environ.update(REEL_RUN='', REEL_DEVICE='cpu', REEL_QUIET='1')
+    try:
+        os.environ['BLENDER'] = step
+        cfg = cfg_in(tmp, shots=[dict(name='r', shot='board', frames=4)])
+        reel.render(cfg, 'preview')
+        o = reel.CUT.shot_dir(cfg, 'r', 'preview')
+        whole = [reel.whole_png(os.path.join(o, '%04d.png' % f)) for f in range(1, 5)]
+        resumed = (whole, os.path.exists(os.path.join(o, '.done')))
+        os.environ['BLENDER'] = stall
+        open(runs, 'w').close()
+        cfg = cfg_in(tmp, shots=[dict(name='s', shot='board', frames=2)])
+        try:
+            reel.render(cfg, 'preview')
+            gave_up = 'finished'
+        except SystemExit:
+            gave_up = len(open(runs).read().split())
+    finally:
+        _time.sleep = sleep
+        for k, v in env.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    check('R11f a shot killed with frames to go resumes, and draws again a frame a kill cut off mid-write',
+          resumed == ([True] * 4, True), resumed)
+    check('R11g a shot gives up after 3 runs in a row that land no frame', gave_up == 3, gave_up)
+    bad = []
+    for name in ('', '.', '../..', 'a/b'):
+        try:
+            cfg_in(tmp, shots=[dict(name=name, shot='board', frames=1)])
+        except SystemExit:
+            bad.append(name)
+    check('R11h a shot named so its folder is a parent (\'\', ., ../..) is refused before anything is emptied',
+          bad == ['', '.', '../..', 'a/b'], bad)
 
 
 def pages_cases(tmp):

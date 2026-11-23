@@ -56,9 +56,10 @@ def wrap():
     return ['heavy', 'timeout', '3600'] if shutil.which('heavy') else []
 
 
-def run(cmd, **kw):
+def run(cmd, pre=(), **kw):
+    """cmd through $REEL_RUN; `pre` (a lock) goes outside it, so waiting for the lock does not use up the time cap"""
     say(' '.join(shlex.quote(str(c)) for c in cmd[:6]) + (' ...' if len(cmd) > 6 else ''))
-    r = subprocess.run(wrap() + [str(c) for c in cmd], **kw)
+    r = subprocess.run(list(pre) + wrap() + [str(c) for c in cmd], **kw)
     if r.returncode:
         raise SystemExit('reel: failed (%d): %s' % (r.returncode, ' '.join(map(str, cmd[:4]))))
 
@@ -83,6 +84,9 @@ def fresh(d, spec):
     tag = hashlib.sha1(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:12]
     stamp = os.path.join(d, '.spec')
     if os.path.isdir(d) and (not os.path.exists(stamp) or open(stamp).read() != tag):
+        parts = d.split(os.sep)   # a name of '', '.' or '../..' would empty a parent: every finished shot, or worse
+        if parts[-1] in ('', '.', '..') or '..' in parts:
+            raise SystemExit('reel: refusing to empty %s' % d)
         shutil.rmtree(d)
     os.makedirs(d, exist_ok=True)
     open(stamp, 'w').write(tag)
@@ -116,6 +120,16 @@ def deps(cfg, args):
                 st = [os.stat(os.path.join(f, n)) for n in sorted(os.listdir(f))]   # (a sheet redrawn larger for the final was not seen)
                 out.append([len(st), sum(x.st_size for x in st), int(max((x.st_mtime for x in st), default=0))])
     return out
+
+
+def whole_png(p):
+    """a PNG that ends in its IEND chunk: one a kill cut off mid-write does not"""
+    try:
+        with open(p, 'rb') as f:
+            f.seek(-12, 2)
+            return f.read(12)[4:8] == b'IEND'
+    except OSError:
+        return False
 
 
 def done(d):
@@ -271,20 +285,27 @@ def render(cfg, quality, only=None):
             args.append('span=%d,%d' % (a, b))
         if fresh(out, [line.get('shot'), nf, args, code('shots/' + SHOTS[line['shot']], 'shots/_shot.py', 'common.py'), deps(cfg, args)]):
             continue
-        def missing():
-            return [f for f in range(a, b + 1) if not os.path.exists(os.path.join(out, '%04d.png' % f))]
+        def missing():   # a frame cut off mid-write by a kill is not a frame: drop it, so the resume draws it again
+            gone = []
+            for f in range(a, b + 1):
+                p = os.path.join(out, '%04d.png' % f)
+                if os.path.exists(p) and not whole_png(p):
+                    os.remove(p)
+                if not os.path.exists(p):
+                    gone.append(f)
+            return gone
         cpu = 'device=cpu' in args or os.environ.get('REEL_DEVICE') == 'cpu'
         lock = os.path.expanduser('~/.cache/hive-video/gpu.lock')   # the card has room for one render: take turns, as `video blender` does
         gpu = ['flock', lock] if not cpu and shutil.which('flock') and os.path.isdir(os.path.dirname(lock)) else []
-        left, stuck = None, 0
-        while True:   # a long shot outlives one run's time cap, and memguard kills the biggest job in a memory stall:
+        left, stuck = len(missing()), 0
+        while True:   # a long shot outlives one run's time cap, and a memory guard kills the biggest job in a memory stall:
             try:      # Blender skips the frames on disk, so go again; give up after 3 runs in a row that land nothing
-                run(gpu + [blender, '-b', '--factory-startup', '-P', os.path.join(HERE, 'shots', SHOTS[line['shot']]), '--',
-                     out, nf, *args, 'quality=' + quality], stdout=subprocess.DEVNULL if os.environ.get('REEL_QUIET') else None)
+                run([blender, '-b', '--factory-startup', '-P', os.path.join(HERE, 'shots', SHOTS[line['shot']]), '--',
+                     out, nf, *args, 'quality=' + quality], pre=gpu, stdout=subprocess.DEVNULL if os.environ.get('REEL_QUIET') else None)
                 break
             except SystemExit:
                 now = len(missing())
-                stuck = stuck + 1 if left is not None and now >= left else 0
+                stuck = stuck + 1 if now >= left else 0
                 if not now:
                     break   # stopped by the time cap after the last frame it needs: that is done
                 if stuck >= 3:

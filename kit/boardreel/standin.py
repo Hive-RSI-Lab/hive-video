@@ -1,5 +1,5 @@
 """Stand-in bodies for parts the design has no 3D model for, so every part shows in the board shots (the second
-film's inductors were missing until the person asked where they were).
+film's inductors were missing from its board shots).
 
     python3 standin.py BOARD.kicad_pcb OUTDIR [--heights heights.json]
 

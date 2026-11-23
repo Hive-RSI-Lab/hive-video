@@ -5,8 +5,8 @@ that frame is on the KiCad board.
     python3 case.py ENCLOSURE_DIR OUT/
 
 Print STLs are usually laid flat for printing, so they are no use here. If ENCLOSURE_DIR has an assembly STEP
-(enclosure.step: one named product per part, as the mech module writes it) the parts are cut out of it in place;
-this needs build123d (pass --python for one that has it, e.g. mech's venv). Without a STEP, STLs already in
+(enclosure.step: one named product per part) the parts are cut out of it in place;
+this needs build123d (pass --python for one that has it). Without a STEP, STLs already in
 place (base.stl, lid.stl, btn_*.stl) are copied. Exit 1 if neither, or if the assembly's board is not where
 board.json says.
 """

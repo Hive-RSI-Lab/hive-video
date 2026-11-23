@@ -6,6 +6,7 @@ trailer. Light paper, dark ink, the newest ink amber, and a soft pastel for each
 a person made, which is what they are.
 """
 import json
+import re
 import os
 import sys
 
@@ -116,7 +117,15 @@ def load(path):
     cfg = json.load(open(path))
     cfg['_dir'] = os.path.dirname(os.path.abspath(path))
     cfg['_src'] = os.path.normpath(os.path.join(cfg['_dir'], cfg.get('source', '.')))
+    for what, names in (('shot', [l.get('name') for l in cfg.get('shots', []) if 'slot' not in l]),
+                        ('drawing', list(cfg.get('drawings', {})))):
+        for n in names:   # a name is a folder the build empties when its spec changes: '', '.' or '../x' would empty the wrong one
+            if not isinstance(n, str) or not NAME.fullmatch(n):
+                raise SystemExit('reel: %s name %r: use letters, digits, _ and - only' % (what, n))
     return cfg
+
+
+NAME = re.compile(r'[A-Za-z0-9_-]+')
 
 
 def src(cfg, rel):
