@@ -85,6 +85,23 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      # The board reel's score decodes its voice line with ffmpeg (kit/boardreel/score.mjs): the same static build as the check job.
+      - uses: actions/cache@v5
+        id: ffmpeg
+        with:
+          path: ${{ runner.temp }}/ffmpeg
+          key: ffmpeg-${{ env.FFMPEG_BUILD }}-${{ runner.os }}
+      - name: fetch ffmpeg
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/ffmpeg"
+          curl -fsSL -o "$RUNNER_TEMP/ffmpeg.tar.xz" "https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_TAG}/ffmpeg-${FFMPEG_BUILD}.tar.xz"
+          echo "${FFMPEG_SHA256}  $RUNNER_TEMP/ffmpeg.tar.xz" | sha256sum -c -
+          tar -xJ -f "$RUNNER_TEMP/ffmpeg.tar.xz" -C "$RUNNER_TEMP/ffmpeg" --strip-components=1
+      - name: point the kit at it
+        run: |
+          echo "$RUNNER_TEMP/ffmpeg/bin" >> "$GITHUB_PATH"
+          echo "FFMPEG=$RUNNER_TEMP/ffmpeg/bin/ffmpeg" >> "$GITHUB_ENV"
       # pip, not apt (see the note on ffmpeg); the runner image already has the X libraries Blender loads.
       - name: python packages
         run: python3 -m pip install --user --break-system-packages numpy==2.5.4 pillow==13.0.0
