@@ -20,6 +20,11 @@ rings are drawn over the frames afterwards. The same script always makes the sam
    that never scrolled, an empty panel, the camera on the wrong thing.
 4. `video stutters OUT/film.mp4` must report 0 stutters. Jerks are fast or popping motion. A jerk is fine where
    content is meant to cut (a page switch, a message arriving); `--allow A-B` skips those spans.
+   Stutters only in the first second mean the page was still warming up (fonts, first layout, first canvas
+   draws) when the first beat began. Film a throwaway first beat of about 1.5 s and leave its clip out:
+   `await d.beat('warm'); await d.hold(1500);` before the real beats, then encode
+   `beats.filter((b) => b.name !== 'warm')`. Waiting for `document.fonts.ready` (through `page.evaluate`)
+   before it can help too. Either way the fix stays in the script, not in a trim.
 5. `video export IN.mp4 DIR` makes site, X, LinkedIn and vertical (1080x1920) copies from the master.
    `video mp4 IN OUT.mp4` makes the web MP4 (H.264, faststart). `video gif IN OUT.gif --max 3` steps the width
    down from 960 px until the GIF fits under 3 MB.
