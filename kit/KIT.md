@@ -104,7 +104,7 @@ traps from such films, and a sign:
 - Canvas `ctx.font = ''` is ignored, so a text helper handed an empty font string draws with the last font set,
   which leaves big ghost text. Give every text call its font.
 - A value that wraps (an angle, a phase, a dial) makes the drawing jump at the wrap. Track the unwrapped value
-  (with a `spring` if it eases) and draw from that, and break a plotted trace at each wrap instead of joining across it.
+  (easing toward it, if it eases) and draw from that, and break a plotted trace at each wrap instead of joining across it.
 - If the first second stutters, the page was not warm yet: see step 4 of `SKILL.md`.
 
 ## Blender shots
