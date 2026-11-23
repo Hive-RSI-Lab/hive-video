@@ -149,14 +149,31 @@ def standin_cases(tmp):
     open(pb, 'w').write('(kicad_pcb\n  (footprint "x:A" (layer "F.Cu") (at 1 1)\n    (property "Reference" "U1")\n'
                         '    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu"))\n'
                         '    (model "models/a.step") (model "${KIPRJMOD}/b.wrl") (model "${LIB3D}/c.step")\n'
-                        '    (model "${KICAD9_3DMODEL_DIR}/R.wrl") (model "/abs/d.wrl"))\n)\n')
-    json.dump({'text_variables': {'LIB3D': '../lib3d'}}, open(os.path.join(d, 'p.kicad_pro'), 'w'))
+                        '    (model "${KICAD9_3DMODEL_DIR}/R.wrl") (model "/abs/d.wrl") (model "kicad-embed://e.step")\n'
+                        '    (model "${NEST}/f.step") (model "$(KIPRJMOD)/g.wrl"))\n'
+                        '  (footprint "x:Fid" (layer "F.Cu") (at 5 5) (attr smd exclude_from_bom)\n'
+                        '    (property "Reference" "FID1")\n    (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu")))\n)\n')
+    json.dump({'text_variables': {'LIB3D': '../lib3d', 'NEST': '${KIPRJMOD}/../nest'}}, open(os.path.join(d, 'p.kicad_pro'), 'w'))
     standin.make(pb, os.path.join(tmp, 'paths', 'out'))
     got = re.findall(r'\(model "([^"]+)"', open(os.path.join(tmp, 'paths', 'out', 'standin.kicad_pcb')).read())
     want = [os.path.join(d, 'models/a.step'), os.path.join(d, 'b.wrl'), os.path.join(tmp, 'paths', 'lib3d', 'c.step'),
-            '${KICAD9_3DMODEL_DIR}/R.wrl', '/abs/d.wrl']
+            '${KICAD9_3DMODEL_DIR}/R.wrl', '/abs/d.wrl', 'kicad-embed://e.step', os.path.join(tmp, 'paths', 'nest', 'f.step'),
+            os.path.join(d, 'g.wrl')]
     check('R5e the copied board resolves from OUTDIR: relative, ${KIPRJMOD} and project-variable model paths are made '
-          'absolute, KiCad\'s own variables and absolute paths kept', got == want, got)
+          'absolute (a variable inside a variable, $(X) too); KiCad\'s own variables, absolute paths and embedded models kept',
+          got == want, got)
+    m = reel.models(pb)
+    check('R5f a fiducial (an smd pad, off the BOM, no model) is not listed for a stand-in block', m == {'U1': 8}, m)
+    q = os.path.join(tmp, 'paths', 'my "q" dir')
+    os.makedirs(q, exist_ok=True)
+    open(os.path.join(q, 'b.kicad_pcb'), 'w').write('(kicad_pcb\n  (footprint "x:A" (layer "F.Cu") (at 1 1)\n'
+                                                     '    (property "Reference" "U1")\n    (model "m.wrl"))\n)\n')
+    standin.make(os.path.join(q, 'b.kicad_pcb'), os.path.join(tmp, 'paths', 'out2'))
+    from kicad import sexpr, kids
+    fp = kids(sexpr(open(os.path.join(tmp, 'paths', 'out2', 'standin.kicad_pcb')).read()), 'footprint')[0]
+    got = kids(fp, 'model')[0][1]
+    check('R5g a quote in the board\'s folder name is escaped in the copy, which still parses to the real path',
+          got == os.path.join(q, 'm.wrl'), got)
 
 
 def rule_cases(tmp):

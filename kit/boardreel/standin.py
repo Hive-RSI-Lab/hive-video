@@ -68,9 +68,7 @@ def _box(fp, layer):
 
 def body(fp, heights):
     """(cx, cy, w, l, h) mm in the footprint's frame, KiCad's y down; None if the part needs no stand-in"""
-    if any('board_only' in a or 'exclude_from_bom' in a for a in kids(fp, 'attr')):
-        return None
-    if not [p for p in kids(fp, 'pad') if p[2] in ('smd', 'thru_hole')]:
+    if not needs_body(fp):
         return None
     name = fp[1].split(':')[-1]
     m = re.search(r'L([\d.]+)-W([\d.]+)', name)
@@ -126,19 +124,49 @@ def project_vars(board):
     return {k: str(x) for k, x in v.items() if isinstance(k, str)}
 
 
+def _unq(s):
+    return re.sub(r'\\(.)', r'\1', s)
+
+
+def _q(s):
+    return s.replace('\\', '\\\\').replace('"', '\\"')
+
+
+VAR = re.compile(r'\$\{(\w+)\}|\$\((\w+)\)')
+
+
 def absolute_models(text, board):
     """The board text with every 3D model path made absolute: the copy is exported from OUTDIR, where a path relative
     to the board, ${KIPRJMOD} or a project text variable no longer resolves (the part would drop without its model).
-    A variable that is neither (KICAD9_3DMODEL_DIR and the like) is left for kicad-cli to expand."""
+    Variables are expanded as KiCad does (${X} and $(X), a project variable inside another, the project's before
+    the environment's); one that is neither (KICAD9_3DMODEL_DIR and the like) is left for kicad-cli. A model embedded
+    in the board (kicad-embed://) or any other URI is kept: the copy carries the embedded files."""
     here = os.path.dirname(os.path.abspath(board))
     names = dict(project_vars(board), KIPRJMOD=here)
 
     def fix(m):
-        path = re.sub(r'\$\{(\w+)\}', lambda v: names.get(v.group(1), v.group(0)), m.group(2))
-        if not path.startswith(('/', '${', '~')) and not re.match(r'[A-Za-z]:[\\/]', path):
-            path = os.path.normpath(os.path.join(here, path))
-        return m.group(1) + path + '"'
-    return re.sub(r'(\(model\s+")((?:[^"\\]|\\.)*)"', fix, text)
+        path = _unq(m.group(2))
+        if '://' in path:
+            return m.group(0)
+        for _ in range(10):
+            new = VAR.sub(lambda v: names.get(v.group(1) or v.group(2), v.group(0)), path)
+            if new == path:
+                break
+            path = new
+        if not path.startswith(('/', '$', '~')) and not re.match(r'[A-Za-z]:[\\/]', path):
+            path = os.path.join(here, path)
+        if path.startswith('/'):
+            path = os.path.normpath(path)
+        return m.group(1) + _q(path) + '"'
+    text = re.sub(r'(\(model\s+")((?:[^"\\]|\\.)*)"', fix, text)
+    return text.replace('${KIPRJMOD}', here)   # an unquoted path in a KiCad 5 board
+
+
+def needs_body(fp):
+    """True for a footprint that is a placed part: a soldered pad, not board-only art, not left off the BOM"""
+    if any('board_only' in a or 'exclude_from_bom' in a for a in kids(fp, 'attr')):
+        return False
+    return bool([p for p in kids(fp, 'pad') if p[2] in ('smd', 'thru_hole')])
 
 
 def make(board, out, heights=None):
