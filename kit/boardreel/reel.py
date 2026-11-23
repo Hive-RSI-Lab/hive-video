@@ -140,15 +140,20 @@ def done(d):
 
 def models(pcb_path):
     """{reference: visible 3D models} for every footprint on the board. One each: a footprint with two draws its part
-    doubled (the first film's connector), one with none leaves a hole in the drop."""
+    doubled (the first film's connector), one with none leaves a hole in the drop. A footprint with no model that
+    standin.py would give no block (a mounting hole, a fiducial) is left out: it is not a part."""
     from kicad import sexpr, kids, hidden, _ref   # noqa: E402  (kit/blender, put on the path by common)
+    import standin
     pcb = sexpr(open(pcb_path).read())
     out = {}
     for fp in kids(pcb, 'footprint'):
         ref = _ref(fp)
         if not ref or ref.startswith('#') or any('board_only' in a for a in kids(fp, 'attr')):   # holes, logos
             continue
-        out[ref] = sum(1 for m in kids(fp, 'model') if not hidden(m))
+        n = sum(1 for m in kids(fp, 'model') if not hidden(m))
+        if not n and not standin.needs_body(fp):
+            continue   # a bare mounting hole, a fiducial: nothing to draw, and standin.py makes it no block
+        out[ref] = n
     return out
 
 
@@ -157,7 +162,9 @@ def prep(cfg):
     board = K.src(cfg, cfg['board'])
     real = os.path.join(b, 'real')
     heights = K.src(cfg, cfg['heights']) if cfg.get('heights') else None
-    if not fresh(real, [board, os.path.getmtime(board), heights, heights and os.path.getmtime(heights), code('standin.py')]):
+    pro = os.path.splitext(board)[0] + '.kicad_pro'   # its text variables name model folders
+    pro_t = os.path.getmtime(pro) if os.path.exists(pro) else None
+    if not fresh(real, [board, os.path.getmtime(board), heights, heights and os.path.getmtime(heights), pro_t, code('standin.py')]):
         cli = tool('kicad-cli')
         common = ['--subst-models', '--force']
         run([cli, 'pcb', 'export', 'glb', '--no-components', '--include-tracks', '--include-pads', '--include-zones',
