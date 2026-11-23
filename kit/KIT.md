@@ -97,6 +97,16 @@ cursor moves on every frame. Nothing real may be in frame: every beat checks the
 5. Encode, stitch, `checkLength`, and make a `contactSheet`. Look at the sheet before you call it done: it shows
    the pace, the framing and anything in frame that should not be.
 
+## Canvas pages
+
+A film drawn on a canvas page (data drawn each frame, the director filming it) runs on the same virtual clock. Two
+traps from such films, and a sign:
+- Canvas `ctx.font = ''` is ignored, so a text helper handed an empty font string draws with the last font set,
+  which leaves big ghost text. Give every text call its font.
+- A value that wraps (an angle, a phase, a dial) makes the drawing jump at the wrap. Track the unwrapped value
+  (with a `spring` if it eases) and draw from that, and break a plotted trace at each wrap instead of joining across it.
+- If the first second stutters, the page was not warm yet: see step 4 of `SKILL.md`.
+
 ## Blender shots
 
 A shot that is modelled rather than filmed (a product turning, a logo, a 3D scene) is a Blender scene script: Python
