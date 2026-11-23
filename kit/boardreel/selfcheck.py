@@ -7,6 +7,7 @@ needed; kit/blender/selfcheck.py runs them with its own).
 Each case is one of the rules the first board reel paid for, checked on the tool that keeps it."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -106,8 +107,10 @@ def layout_cases(tmp):
 def model_cases(tmp):
     import reel
     m = reel.models(os.path.join(FIX, 'tiny.kicad_pcb'))
-    check('R5 3D models are counted per footprint: a doubled part and a part with none are both found',
-          m == {'R1': 1, 'J1': 2, 'H1': 0}, m)
+    check('R5 3D models are counted per footprint: a doubled part is found',
+          m == {'R1': 1, 'J1': 2}, m)
+    check('R5c a bare mounting hole (no model, no soldered pad) is not listed as a part needing a stand-in block',
+          'H1' not in m, m)
 
 
 def standin_cases(tmp):
@@ -136,6 +139,24 @@ def standin_cases(tmp):
     check('R5b a part with no 3D model gets a stand-in block sized from its footprint name and the heights file; '
           'modelled parts, holes and board-only art get none',
           refs == ['L1'] and size == (8.0, 8.0, 5.2) and pcb.count('/standin/L1.wrl') == 1, (refs, size))
+    import reel
+    m = reel.models(b)
+    check('R5d a soldered part with no model is listed for a stand-in; board-only art and a bare hole are not',
+          m.get('L1') == 0 and 'G1' not in m and 'H1' not in m, m)
+    d = os.path.join(tmp, 'paths', 'proj')
+    os.makedirs(d, exist_ok=True)
+    pb = os.path.join(d, 'p.kicad_pcb')
+    open(pb, 'w').write('(kicad_pcb\n  (footprint "x:A" (layer "F.Cu") (at 1 1)\n    (property "Reference" "U1")\n'
+                        '    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu"))\n'
+                        '    (model "models/a.step") (model "${KIPRJMOD}/b.wrl") (model "${LIB3D}/c.step")\n'
+                        '    (model "${KICAD9_3DMODEL_DIR}/R.wrl") (model "/abs/d.wrl"))\n)\n')
+    json.dump({'text_variables': {'LIB3D': '../lib3d'}}, open(os.path.join(d, 'p.kicad_pro'), 'w'))
+    standin.make(pb, os.path.join(tmp, 'paths', 'out'))
+    got = re.findall(r'\(model "([^"]+)"', open(os.path.join(tmp, 'paths', 'out', 'standin.kicad_pcb')).read())
+    want = [os.path.join(d, 'models/a.step'), os.path.join(d, 'b.wrl'), os.path.join(tmp, 'paths', 'lib3d', 'c.step'),
+            '${KICAD9_3DMODEL_DIR}/R.wrl', '/abs/d.wrl']
+    check('R5e the copied board resolves from OUTDIR: relative, ${KIPRJMOD} and project-variable model paths are made '
+          'absolute, KiCad\'s own variables and absolute paths kept', got == want, got)
 
 
 def rule_cases(tmp):

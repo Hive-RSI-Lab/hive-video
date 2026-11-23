@@ -140,7 +140,8 @@ def done(d):
 
 def models(pcb_path):
     """{reference: visible 3D models} for every footprint on the board. One each: a footprint with two draws its part
-    doubled (the first film's connector), one with none leaves a hole in the drop."""
+    doubled (the first film's connector), one with none leaves a hole in the drop. A footprint with no model and no
+    soldered pad (a mounting hole) is left out: it is not a part."""
     from kicad import sexpr, kids, hidden, _ref   # noqa: E402  (kit/blender, put on the path by common)
     pcb = sexpr(open(pcb_path).read())
     out = {}
@@ -148,7 +149,10 @@ def models(pcb_path):
         ref = _ref(fp)
         if not ref or ref.startswith('#') or any('board_only' in a for a in kids(fp, 'attr')):   # holes, logos
             continue
-        out[ref] = sum(1 for m in kids(fp, 'model') if not hidden(m))
+        n = sum(1 for m in kids(fp, 'model') if not hidden(m))
+        if not n and not [p for p in kids(fp, 'pad') if p[2] in ('smd', 'thru_hole')]:
+            continue   # a bare mounting hole or fiducial: nothing to draw, and standin.py makes it no block
+        out[ref] = n
     return out
 
 

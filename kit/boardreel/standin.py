@@ -3,7 +3,8 @@ film's inductors were missing from its board shots).
 
     python3 standin.py BOARD.kicad_pcb OUTDIR [--heights heights.json]
 
-Writes OUTDIR/standin.kicad_pcb (the board, with ${KIPRJMOD} made absolute and a model added to each model-less
+Writes OUTDIR/standin.kicad_pcb (the board, with every model path made absolute: relative, ${KIPRJMOD}
+and the project's text variables; and a model added to each model-less
 part) and OUTDIR/standin/REF.wrl, a dark moulded block with a chamfered top. Its footprint is the L and W in the
 footprint's name (IND-SMD_L8.0-W8.0_...), else the F.Fab outline, else the courtyard less 0.5 mm a side. Its height
 is the footprint's `above` in the heights file (by footprint name after 'lib:', the enclosure tool's format; a
@@ -115,8 +116,33 @@ def wrl(cx, cy, w, l, h):
             '  coordIndex [ %s ] }\n}\n' % (pt, ix))
 
 
+def project_vars(board):
+    """{name: value} of the text variables in the board's .kicad_pro, which stays behind when the board is copied"""
+    pro = os.path.splitext(board)[0] + '.kicad_pro'
+    try:
+        v = json.load(open(pro)).get('text_variables') or {}
+    except (OSError, ValueError):
+        return {}
+    return {k: str(x) for k, x in v.items() if isinstance(k, str)}
+
+
+def absolute_models(text, board):
+    """The board text with every 3D model path made absolute: the copy is exported from OUTDIR, where a path relative
+    to the board, ${KIPRJMOD} or a project text variable no longer resolves (the part would drop without its model).
+    A variable that is neither (KICAD9_3DMODEL_DIR and the like) is left for kicad-cli to expand."""
+    here = os.path.dirname(os.path.abspath(board))
+    names = dict(project_vars(board), KIPRJMOD=here)
+
+    def fix(m):
+        path = re.sub(r'\$\{(\w+)\}', lambda v: names.get(v.group(1), v.group(0)), m.group(2))
+        if not path.startswith(('/', '${', '~')) and not re.match(r'[A-Za-z]:[\\/]', path):
+            path = os.path.normpath(os.path.join(here, path))
+        return m.group(1) + path + '"'
+    return re.sub(r'(\(model\s+")((?:[^"\\]|\\.)*)"', fix, text)
+
+
 def make(board, out, heights=None):
-    text = open(board).read().replace('${KIPRJMOD}', os.path.dirname(os.path.abspath(board)))
+    text = absolute_models(open(board).read(), board)
     hs = json.load(open(heights)) if heights else {}
     os.makedirs(os.path.join(out, 'standin'), exist_ok=True)
     parts, refs, last, real = [], [], 0, {}
