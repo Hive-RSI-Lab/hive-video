@@ -57,7 +57,13 @@ def drawing(cfg):
         d = cfg.get('drawings', {}).get(m.group(1)) if m else None
         if not d or d['tool'] != ('schematic' if a.get('seq') else 'sheets'):
             continue
-        new = json.load(open(os.path.join(K.build_dir(cfg), 'drawings', m.group(1), 'new.json')))['new']
+        nj = os.path.join(K.build_dir(cfg), 'drawings', m.group(1), 'new.json')
+        if not os.path.exists(nj):
+            # the build folder is scratch (often under $TMPDIR): once cleared, say so rather than stop on a traceback
+            out.append((line['name'], False, 'no %s: the build folder was cleared or never rendered; run reel.py render '
+                        'again, or keep "build" outside $TMPDIR' % nj))
+            continue
+        new = json.load(open(nj))['new']
         nf = int(line['frames'])
         first, last = line.get('use', [1, nf])
         sq = dict(seq0=int(a.get('seq0', 0)), seqn=int(a.get('seqn', len(new))), rate=float(a.get('rate', 1)), ramp=float(a.get('ramp', 0)))

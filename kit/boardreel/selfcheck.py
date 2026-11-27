@@ -52,6 +52,11 @@ def drawing_cases(tmp):
     res = {n: ok for n, ok, _ in checks.drawing(c)}
     check('R2 the drawing check passes a shot that draws every frame and fails one that repeats or runs out of ink',
           res == {'good': True, 'slow': False, 'held': False}, res)
+    c = cfg_in(tmp, drawings={'S': {'tool': 'schematic'}, 'G': {'tool': 'schematic'}}, shots=[
+        dict(name='gone', shot='paper', frames=12, args='seq=@G')])
+    res = checks.drawing(c)
+    check('R2e a drawing whose build folder was cleared fails with a line that says to render again, not a traceback',
+          len(res) == 1 and not res[0][1] and 'render' in res[0][2], res)
     c = cfg_in(tmp, drawings={'S': {'tool': 'schematic'}}, shots=[
         dict(name='far', shot='paper', frames=12, args='seq=@S cam=0,0,0.20,0,50:0,0,0.12,0,50 lens=50'),
         dict(name='near', shot='paper', frames=12, args='seq=@S cam=0,0,0.20,0,50:0,0,0.03,0,50 lens=50'),
